@@ -1,0 +1,6 @@
+streamlit
+pandas
+plotly
+requests
+google-generativeai
+lxml
