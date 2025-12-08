@@ -8,7 +8,7 @@ from io import StringIO
 import calendar
 import re
 import google.generativeai as genai
-from openai import OpenAI  # 新增：引入 OpenAI 套件
+from openai import OpenAI
 
 # --- 頁面設定 ---
 st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (雙 AI 對決版)")
@@ -17,9 +17,6 @@ TW_TZ = timezone(timedelta(hours=8))
 # ==========================================
 # 🔑 金鑰設定區 (自動讀取 Secrets 或本地變數)
 # ==========================================
-# 建議在 Streamlit Secrets 設定：
-# GEMINI_API_KEY = "你的Key"
-# OPENAI_API_KEY = "你的Key"
 try:
     GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
     OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", "")
@@ -27,16 +24,19 @@ except:
     GEMINI_KEY = ""
     OPENAI_KEY = ""
 
-# --- 🧠 1. Gemini 模型設定 ---
+# --- 🧠 1. Gemini 模型設定 (自動找最佳模型) ---
 def get_gemini_model(api_key):
     if not api_key: return None, "未設定"
     genai.configure(api_key=api_key)
     try:
-        # 自動找最佳模型 (Flash -> Pro)
+        # 取得可用模型列表
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # 優先順序: Flash (快) -> 1.5 Pro (強) -> Pro (舊)
         for target in ['flash', 'gemini-1.5-pro', 'gemini-pro']:
             for m in models:
                 if target in m.lower(): return genai.GenerativeModel(m), m
+        
+        # 兜底：隨便回傳第一個
         return (genai.GenerativeModel(models[0]), models[0]) if models else (None, "無可用模型")
     except Exception as e: return None, str(e)
 
@@ -183,6 +183,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     annotations.append(dict(x=0.02, y=1.05, xref="paper", yref="paper", text=f"<b>Put 總金額</b><br>{total_put_money/100000000:.1f} 億", showarrow=False, align="left", font=dict(size=14, color="#2ca02c"), bgcolor="white", bordercolor="#2ca02c", borderwidth=2, borderpad=6))
     annotations.append(dict(x=0.98, y=1.05, xref="paper", yref="paper", text=f"<b>Call 總金額</b><br>{total_call_money/100000000:.1f} 億", showarrow=False, align="right", font=dict(size=14, color="#d62728"), bgcolor="white", bordercolor="#d62728", borderwidth=2, borderpad=6))
 
+    # Margin Top 加大，避免標題重疊
     fig.update_layout(title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")), xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'), barmode='overlay', legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), height=750, margin=dict(l=40, r=80, t=140, b=60), annotations=annotations, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
@@ -190,7 +191,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
 def prepare_ai_data(df):
     df_ai = df.copy()
     if 'Amount' in df_ai.columns:
-        df_ai = df_ai.nlargest(15, 'Amount') # 取前15大
+        df_ai = df_ai.nlargest(15, 'Amount') # 瘦身：只取前15大
     keep = ['Strike', 'Type', 'OI', 'Amount']
     df_ai = df_ai[keep]
     return df_ai.to_csv(index=False)
@@ -203,20 +204,28 @@ def ask_gemini(data_str, taiex_price):
         return gemini_model.generate_content(prompt).text
     except Exception as e: return f"Gemini 錯誤: {str(e)}"
 
-# --- AI 分析 (ChatGPT) ---
+# --- AI 分析 (ChatGPT - 防呆加強版) ---
 def ask_chatgpt(data_str, taiex_price):
     if not openai_client: return "⚠️ 未設定 OpenAI Key"
     try:
         prompt = f"你是一個交易員。大盤{taiex_price}。根據這份選擇權籌碼(CSV)，直接給出【短線操作建議】。\n規則：1.不解釋過程 2.給結論(偏多/空/震盪) 3.100字內。\n數據：\n{data_str}"
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini", # 使用 4o-mini 省錢且快速
+            model="gpt-4o-mini", 
             messages=[
                 {"role": "system", "content": "You are a professional trader."},
                 {"role": "user", "content": prompt}
             ]
         )
         return response.choices[0].message.content
-    except Exception as e: return f"ChatGPT 錯誤: {str(e)}"
+    except Exception as e:
+        error_msg = str(e)
+        # --- 防呆判斷 ---
+        if "insufficient_quota" in error_msg:
+            return "⚠️ OpenAI 額度不足 (請至官網儲值)"
+        elif "429" in error_msg:
+            return "⚠️ 請求過於頻繁 (請稍後再試)"
+        else:
+            return f"ChatGPT 錯誤: {error_msg}"
 
 # --- 主程式 ---
 def main():
@@ -229,7 +238,7 @@ def main():
     # 顯示 AI 狀態
     st.sidebar.markdown("---")
     st.sidebar.markdown("**AI 連線狀態:**")
-    st.sidebar.caption(f"🔵 Gemini: {'✅' if gemini_model else '❌'}")
+    st.sidebar.caption(f"🔵 Gemini ({gemini_name}): {'✅' if gemini_model else '❌'}")
     st.sidebar.caption(f"🟢 ChatGPT: {'✅' if openai_client else '❌'}")
 
     with st.spinner('連線期交所中...'):
@@ -245,7 +254,7 @@ def main():
     st.markdown("### 💡 AI 觀點對決")
     if st.button("✨ 啟動 AI 雙重分析", type="primary"):
         if not gemini_model and not openai_client:
-            st.error("請至少設定一個 API Key (Gemini 或 OpenAI)")
+            st.error("請至少設定一個 API Key")
         else:
             data_str = prepare_ai_data(df)
             
@@ -266,11 +275,15 @@ def main():
                 if openai_client:
                     with st.spinner("ChatGPT 分析中..."):
                         res_chatgpt = ask_chatgpt(data_str, taiex_now)
-                        st.success(res_chatgpt)
+                        # 如果是額度不足警告，顯示黃色；正常則顯示綠色
+                        if "⚠️" in res_chatgpt:
+                             st.warning(res_chatgpt)
+                        else:
+                             st.success(res_chatgpt)
                 else:
                     st.warning("未設定 OpenAI Key")
 
-    # 數據指標與圖表 (維持不變)
+    # 數據指標與圖表
     total_call_amt = df[df['Type'].str.contains('買|Call', case=False, na=False)]['Amount'].sum()
     total_put_amt = df[df['Type'].str.contains('賣|Put', case=False, na=False)]['Amount'].sum()
     pc_ratio_amt = (total_put_amt / total_call_amt) * 100 if total_call_amt > 0 else 0
