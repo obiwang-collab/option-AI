@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor  # 多執行緒
 
 # --- 頁面設定 ---
 st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (雙 AI 對決版)")
-TW_TZ = timezone(timedelta(hours=8)) 
+TW_TZ = timezone(timedelta(hours=8))
 
 # ==========================================
 # 🔑 金鑰設定區 (自動讀取 Secrets 或本地變數)
@@ -27,23 +27,30 @@ except:
 
 # --- 🧠 1. Gemini 模型設定 (自動找最佳模型) ---
 def get_gemini_model(api_key):
-    if not api_key: return None, "未設定"
+    if not api_key:
+        return None, "未設定"
     genai.configure(api_key=api_key)
     try:
         # 取得可用模型列表
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        models = [
+            m.name for m in genai.list_models()
+            if 'generateContent' in m.supported_generation_methods
+        ]
         # 優先順序: Flash (快) -> 1.5 Pro (強) -> Pro (舊)
         for target in ['flash', 'gemini-1.5-pro', 'gemini-pro']:
             for m in models:
-                if target in m.lower(): return genai.GenerativeModel(m), m
-        
+                if target in m.lower():
+                    return genai.GenerativeModel(m), m
+
         # 兜底：隨便回傳第一個
         return (genai.GenerativeModel(models[0]), models[0]) if models else (None, "無可用模型")
-    except Exception as e: return None, str(e)
+    except Exception as e:
+        return None, str(e)
 
 # --- 🧠 2. ChatGPT 模型設定 ---
 def get_openai_client(api_key):
-    if not api_key: return None
+    if not api_key:
+        return None
     return OpenAI(api_key=api_key)
 
 # 初始化模型
@@ -52,16 +59,18 @@ openai_client = get_openai_client(OPENAI_KEY)
 
 # 手動修正結算日
 MANUAL_SETTLEMENT_FIX = {
-    '202501W1': '2025/01/02', 
+    '202501W1': '2025/01/02',
 }
 
 # --- 核心函式 ---
 def get_settlement_date(contract_code):
     code = str(contract_code).strip().upper()
     for key, fix_date in MANUAL_SETTLEMENT_FIX.items():
-        if key in code: return fix_date
+        if key in code:
+            return fix_date
     try:
-        if len(code) < 6: return "9999/99/99"
+        if len(code) < 6:
+            return "9999/99/99"
         year = int(code[:4])
         month = int(code[4:6])
         c = calendar.monthcalendar(year, month)
@@ -72,17 +81,23 @@ def get_settlement_date(contract_code):
             match = re.search(r'W(\d)', code)
             if match:
                 week_num = int(match.group(1))
-                if len(wednesdays) >= week_num: day = wednesdays[week_num - 1]
+                if len(wednesdays) >= week_num:
+                    day = wednesdays[week_num - 1]
         elif 'F' in code:
             match = re.search(r'F(\d)', code)
             if match:
                 week_num = int(match.group(1))
-                if len(fridays) >= week_num: day = fridays[week_num - 1]
+                if len(fridays) >= week_num:
+                    day = fridays[week_num - 1]
         else:
-            if len(wednesdays) >= 3: day = wednesdays[2]
-        if day: return f"{year}/{month:02d}/{day:02d}"
-        else: return "9999/99/99"
-    except: return "9999/99/99"
+            if len(wednesdays) >= 3:
+                day = wednesdays[2]
+        if day:
+            return f"{year}/{month:02d}/{day:02d}"
+        else:
+            return "9999/99/99"
+    except:
+        return "9999/99/99"
 
 @st.cache_data(ttl=60)
 def get_realtime_data():
@@ -95,17 +110,22 @@ def get_realtime_data():
         data = res.json()
         if 'msgArray' in data and len(data['msgArray']) > 0:
             val = data['msgArray'][0].get('z', '-')
-            if val == '-': val = data['msgArray'][0].get('o', '-')
-            if val != '-': taiex = float(val)
-    except: pass
+            if val == '-':
+                val = data['msgArray'][0].get('o', '-')
+            if val != '-':
+                taiex = float(val)
+    except:
+        pass
     if taiex is None:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/%5ETWII?interval=1m&range=1d&_={ts}"
             res = requests.get(url, headers=headers, timeout=3)
             data = res.json()
             price = data['chart']['result'][0]['meta'].get('regularMarketPrice')
-            if price: taiex = float(price)
-        except: pass
+            if price:
+                taiex = float(price)
+        except:
+            pass
     return taiex
 
 @st.cache_data(ttl=300)
@@ -126,8 +146,8 @@ def get_option_data():
         }
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5)
-            if "查無資料" in res.text or len(res.text) < 500: 
-                continue 
+            if "查無資料" in res.text or len(res.text) < 500:
+                continue
             dfs = pd.read_html(StringIO(res.text))
             df = dfs[0]
             df.columns = [str(c).replace(' ', '').replace('*', '').replace('契約', '').strip() for c in df.columns]
@@ -138,7 +158,7 @@ def get_option_data():
             price_col = next((c for c in df.columns if '結算' in c or '收盤' in c or 'Price' in c), None)
             vol_col = next((c for c in df.columns if '成交量' in c or 'Volume' in c), None)
 
-            if not all([month_col, strike_col, type_col, oi_col, price_col]): 
+            if not all([month_col, strike_col, type_col, oi_col, price_col]):
                 continue
 
             rename_dict = {
@@ -148,29 +168,29 @@ def get_option_data():
                 oi_col: 'OI',
                 price_col: 'Price'
             }
-            if vol_col: 
+            if vol_col:
                 rename_dict[vol_col] = 'Volume'
             df = df.rename(columns=rename_dict)
-            
+
             cols_to_keep = ['Month', 'Strike', 'Type', 'OI', 'Price']
-            if 'Volume' in df.columns: 
+            if 'Volume' in df.columns:
                 cols_to_keep.append('Volume')
             df = df[cols_to_keep].copy()
-            
+
             df = df.dropna(subset=['Type'])
             df['Type'] = df['Type'].astype(str).str.strip()
             df['Strike'] = pd.to_numeric(df['Strike'].astype(str).str.replace(',', ''), errors='coerce')
             df['OI'] = pd.to_numeric(df['OI'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             df['Price'] = df['Price'].astype(str).str.replace(',', '').replace('-', '0')
             df['Price'] = pd.to_numeric(df['Price'], errors='coerce').fillna(0)
-            if 'Volume' in df.columns: 
+            if 'Volume' in df.columns:
                 df['Volume'] = pd.to_numeric(df['Volume'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             df['Amount'] = df['OI'] * df['Price'] * 50
-            if df['OI'].sum() == 0: 
-                continue 
+            if df['OI'].sum() == 0:
+                continue
             return df, query_date
-        except: 
-            continue 
+        except:
+            continue
     return None, None
 
 def plot_tornado_chart(df_target, title_text, spot_price):
@@ -178,39 +198,41 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     df_call = df_target[is_call][['Strike', 'OI', 'Amount']].rename(columns={'OI': 'Call_OI', 'Amount': 'Call_Amt'})
     df_put = df_target[~is_call][['Strike', 'OI', 'Amount']].rename(columns={'OI': 'Put_OI', 'Amount': 'Put_Amt'})
     data = pd.merge(df_call, df_put, on='Strike', how='outer').fillna(0).sort_values('Strike')
-    
+
     total_put_money = data['Put_Amt'].sum()
     total_call_money = data['Call_Amt'].sum()
-    
+
     data = data[(data['Call_OI'] > 300) | (data['Put_OI'] > 300)]
-    FOCUS_RANGE = 1200 
-    center_price = spot_price if (spot_price and spot_price > 0) else (data.loc[data['Put_OI'].idxmax(), 'Strike'] if not data.empty else 0)
-    
+    FOCUS_RANGE = 1200
+    center_price = spot_price if (spot_price and spot_price > 0) else (
+        data.loc[data['Put_OI'].idxmax(), 'Strike'] if not data.empty else 0
+    )
+
     if center_price > 0:
         min_s = center_price - FOCUS_RANGE
         max_s = center_price + FOCUS_RANGE
         data = data[(data['Strike'] >= min_s) & (data['Strike'] <= max_s)]
-    
+
     max_oi = max(data['Put_OI'].max(), data['Call_OI'].max()) if not data.empty else 1000
     x_limit = max_oi * 1.1
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        y=data['Strike'], 
-        x=-data['Put_OI'], 
-        orientation='h', 
-        name='Put (支撐)', 
-        marker_color='#2ca02c', 
+        y=data['Strike'],
+        x=-data['Put_OI'],
+        orientation='h',
+        name='Put (支撐)',
+        marker_color='#2ca02c',
         opacity=0.85,
         customdata=data['Put_Amt'] / 100000000,
         hovertemplate='<b>履約價: %{y}</b><br>Put OI: %{x} 口<br>Put 市值: %{customdata:.2f}億<extra></extra>'
     ))
     fig.add_trace(go.Bar(
-        y=data['Strike'], 
-        x=data['Call_OI'], 
-        orientation='h', 
-        name='Call (壓力)', 
-        marker_color='#d62728', 
+        y=data['Strike'],
+        x=data['Call_OI'],
+        orientation='h',
+        name='Call (壓力)',
+        marker_color='#d62728',
         opacity=0.85,
         customdata=data['Call_Amt'] / 100000000,
         hovertemplate='<b>履約價: %{y}</b><br>Call OI: %{x} 口<br>Call 市值: %{customdata:.2f}億<extra></extra>'
@@ -245,8 +267,8 @@ def plot_tornado_chart(df_target, title_text, spot_price):
 
     fig.update_layout(
         title=dict(
-            text=title_text, y=0.95, x=0.5, 
-            xanchor='center', yanchor='top', 
+            text=title_text, y=0.95, x=0.5,
+            xanchor='center', yanchor='top',
             font=dict(size=20, color="black")
         ),
         xaxis=dict(
@@ -257,9 +279,10 @@ def plot_tornado_chart(df_target, title_text, spot_price):
             zerolinewidth=2,
             zerolinecolor='black',
             tickmode='array',
-            tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75],
-            ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0",
-                      f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]
+            tickvals=[-x_limit * 0.75, -x_limit * 0.5, -x_limit * 0.25, 0,
+                      x_limit * 0.25, x_limit * 0.5, x_limit * 0.75],
+            ticktext=[f"{int(x_limit * 0.75)}", f"{int(x_limit * 0.5)}", f"{int(x_limit * 0.25)}", "0",
+                      f"{int(x_limit * 0.25)}", f"{int(x_limit * 0.5)}", f"{int(x_limit * 0.75)}"]
         ),
         yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'),
         barmode='overlay',
@@ -272,11 +295,10 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     )
     return fig
 
-# --- 資料準備函式 (供 AI 使用) ---
+# --- 資料準備函式 (供 AI 使用：完整 TXO 資料) ---
 def prepare_ai_data(df):
     """
-    ✅ 改成：用「從期交所抓下來的完整 TXO 資料」給 AI 分析
-    不再只取前 15 筆，也不過濾特定合約。
+    使用期交所抓下來的「完整 TXO 資料」，包含所有月份 / 週別。
     """
     df_ai = df.copy()
     keep_cols = [c for c in ['Month', 'Strike', 'Type', 'OI', 'Amount'] if c in df_ai.columns]
@@ -289,11 +311,11 @@ def get_next_contracts(df, data_date):
     all_contracts = []
     for code in unique_codes:
         s_date_str = get_settlement_date(code)
-        if s_date_str == "9999/99/99" or s_date_str <= data_date: 
+        if s_date_str == "9999/99/99" or s_date_str <= data_date:
             continue
         all_contracts.append({'code': code, 'date': s_date_str})
     all_contracts.sort(key=lambda x: x['date'])
-    
+
     plot_targets = []
     if all_contracts:
         nearest = all_contracts[0]
@@ -306,48 +328,49 @@ def get_next_contracts(df, data_date):
                 plot_targets[0]['title'] = '最近結算 (同月選)'
     return plot_targets
 
-# --- 統一 prompt 建構器（Gemini / ChatGPT 共用） ---
+# --- ⭐ 新版 Prompt：讓 ChatGPT 講得跟交易員一樣 ---
 def build_ai_prompt(data_str, taiex_price, contract_info, data_date):
     """
-    這裡的 CSV 是：從期交所抓下來的「完整 TXO 日報表」，包含所有月份 / 週別。
-    contract_info 只是提供「最近結算合約」當作參考重點。
+    CSV 是完整 TXO OI + Amount 資料（所有月份 / 週別）。
+    ChatGPT / Gemini 會依照整份資料判斷短線方向與關鍵支撐壓力。
     """
     if contract_info:
-        contract_note = f"系統判斷下一個即將結算合約為：{contract_info.get('code')}，結算日：{contract_info.get('date')}。"
+        contract_note = f"最近結算合約：{contract_info.get('code')}（結算日：{contract_info.get('date')}）。"
     else:
-        contract_note = "系統目前無法判斷最近結算合約。"
+        contract_note = "（系統無法判斷最近結算合約）"
 
     prompt = f"""
-你是一位專業的台指期 / 選擇權交易員助理。
+你是一位專業台指期 / 選擇權交易員，請你分析以下「完整 TXO OI + Amount 資料」，判斷短線行情。
 
-⚠ 重要說明：
-- 下面的 CSV 是「期交所 TXO 日報表的完整數據」，已轉成表格格式提供給你。
-- 這份資料包含所有月份與週別的 TXO 合約，不是只篩選某一個到期日。
-- 系統額外幫你計算出「目前最近要結算的合約」，僅作為你判斷短線時的參考重點。
+⚠ 任務目標：根據所有月份 / 週別的 TXO 籌碼結構，給出「短線方向」與「關鍵支撐 / 壓力區間」。
 
-系統資訊：
-1) 期交所資料來源日期：{data_date}
-2) 台指大盤現貨：{taiex_price}
-3) {contract_note}
+輸出格式（請嚴格照格式輸出）：
+1️⃣ 【方向】：偏多 / 偏空 / 震盪（三選一）
+2️⃣ 【關鍵區間】：
+   - 列出至少兩個主要壓力區（例如：28600–29000）
+   - 列出至少兩個主要支撐區（例如：27700–28200）
+   - 這些區間請根據 OI / 金額集中區推論
+3️⃣ 【理由摘要】：
+   - 用 2～4 句中文說明主要原因
+   - 可以提到：最近結算週 / 月、大額 Call / Put 集中區、P/C 金額比、支撐壓力結構等
+4️⃣ 字數不限，可以完整說明，但不要逐一列出所有履約價，也不要解釋計算細節。
 
-請你根據「完整 TXO 資料」來判斷短線操作方向，重點考慮：
-- 最近結算合約附近的壓力 / 支撐（但不可忽略遠月或其他大部位）
-- 全市場整體 Put / Call 部位、金額分布
-- 是否出現明顯偏多 / 偏空 / 震盪格局
+參考資訊：
+- 台指大盤現貨：{taiex_price}
+- 期交所資料日期：{data_date}
+- {contract_note}
 
-輸出規則（必須遵守）：
-1. 第一行只給三選一結論：**偏多** / **偏空** / **震盪**
-2. 接著 30～80 字，用中文簡短說明理由，可以條列也可以一句話，但不要解釋計算過程。
-3. 若你懷疑這份資料不是最新（例如日期過舊或與大盤價嚴重不符），請在開頭加上「⚠️ 資料日期異常」，再給出你比較保守的看法。
-
-以下是期交所 TXO 完整數據（CSV），欄位為：Month,Strike,Type,OI,Amount
+以下是期交所 TXO 完整日報資料（CSV），欄位：Month,Strike,Type,OI,Amount
 {data_str}
+
+請務必結合數據，給出具體、實務風格的交易建議。
 """
     return prompt.strip()
 
 # --- AI 分析 (Gemini) ---
 def ask_gemini(prompt_text):
-    if not gemini_model: return "⚠️ 未設定 Gemini Key"
+    if not gemini_model:
+        return "⚠️ 未設定 Gemini Key"
     try:
         res = gemini_model.generate_content(prompt_text)
         if hasattr(res, "text"):
@@ -360,7 +383,8 @@ def ask_gemini(prompt_text):
 
 # --- AI 分析 (ChatGPT - 使用 gpt-4o-mini) ---
 def ask_chatgpt(prompt_text):
-    if not openai_client: return "⚠️ 未設定 OpenAI Key"
+    if not openai_client:
+        return "⚠️ 未設定 OpenAI Key"
     try:
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -388,9 +412,9 @@ def ask_chatgpt(prompt_text):
 # --- 主程式 ---
 def main():
     st.title("🤖 台指期籌碼戰情室 (雙 AI 對決版)")
-    
+
     col_title, col_btn = st.columns([3, 1])
-    
+
     if st.sidebar.button("🔄 重新整理"):
         st.cache_data.clear()
         st.rerun()
@@ -410,7 +434,7 @@ def main():
         return
 
     csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.sidebar.download_button("📥 下載完整數據", csv, f"option_{data_date.replace('/','')}.csv", "text/csv")
+    st.sidebar.download_button("📥 下載完整數據", csv, f"option_{data_date.replace('/', '')}.csv", "text/csv")
 
     # --- 預先計算接下來要使用的合約（畫圖用） ---
     plot_targets = get_next_contracts(df, data_date)
@@ -421,9 +445,9 @@ def main():
         if not gemini_model and not openai_client:
             st.error("請至少設定一個 API Key")
         else:
-            # ✅ 用「完整 df」準備給 AI 的 CSV
+            # 用「完整 df」準備給 AI 的 CSV
             data_str = prepare_ai_data(df)
-            # 仍然把最近結算合約資訊提供給 AI 當參考
+            # 使用最近結算合約當作參考資訊
             contract_info = plot_targets[0]['info'] if plot_targets else None
             prompt_text = build_ai_prompt(data_str, taiex_now, contract_info, data_date)
 
@@ -447,7 +471,7 @@ def main():
 
             # 建立左右兩欄顯示結果（維持你原本的格式）
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 st.subheader("🔵 Google Gemini")
                 if gemini_model:
@@ -457,7 +481,7 @@ def main():
                         st.info(gemini_result)
                 else:
                     st.warning("未設定 Gemini Key")
-            
+
             with col2:
                 st.subheader("🟢 OpenAI ChatGPT")
                 if openai_client:
@@ -484,7 +508,8 @@ def main():
     )
     c2.metric("大盤現貨", f"{int(taiex_now) if taiex_now else 'N/A'}")
     trend = "偏多" if pc_ratio_amt > 100 else "偏空"
-    c3.metric("全市場 P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}格局", delta_color="normal" if pc_ratio_amt > 100 else "inverse")
+    c3.metric("全市場 P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}格局",
+              delta_color="normal" if pc_ratio_amt > 100 else "inverse")
     c4.metric("資料來源日期", data_date)
     st.markdown("---")
 
