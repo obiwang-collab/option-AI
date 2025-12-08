@@ -19,9 +19,11 @@ TW_TZ = timezone(timedelta(hours=8))
 # 🔑 金鑰設定區
 # ==========================================
 try:
+    # 嘗試從 Streamlit Secrets 讀取
     GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
     OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", "")
-except:
+except FileNotFoundError:
+    # 本地端若無 secrets.toml 則為空
     GEMINI_KEY = ""
     OPENAI_KEY = ""
 
@@ -30,8 +32,10 @@ def get_gemini_model(api_key):
     if not api_key: return None, "未設定"
     genai.configure(api_key=api_key)
     try:
+        # 取得支援 generateContent 的模型
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         target_model = None
+        # 優先順序：Flash -> 1.5 Pro -> Pro
         for target in ['flash', 'gemini-1.5-pro', 'gemini-pro']:
             for m in models:
                 if target in m.lower(): return genai.GenerativeModel(m), m
@@ -43,6 +47,7 @@ def get_openai_client(api_key):
     if not api_key: return None
     return OpenAI(api_key=api_key)
 
+# 初始化模型
 gemini_model, gemini_name = get_gemini_model(GEMINI_KEY)
 openai_client = get_openai_client(OPENAI_KEY)
 
@@ -82,6 +87,7 @@ def get_realtime_data():
     taiex = None
     ts = int(time.time())
     headers = {'User-Agent': 'Mozilla/5.0'}
+    # 1. 嘗試證交所
     try:
         url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw&json=1&delay=0&_={ts}000"
         res = requests.get(url, timeout=2)
@@ -91,6 +97,8 @@ def get_realtime_data():
             if val == '-': val = data['msgArray'][0].get('o', '-')
             if val != '-': taiex = float(val)
     except: pass
+    
+    # 2. 嘗試 Yahoo
     if taiex is None:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/%5ETWII?interval=1m&range=1d&_={ts}"
@@ -110,6 +118,7 @@ def get_option_data():
         payload = {'queryType': '2', 'marketCode': '0', 'dateaddcnt': '', 'commodity_id': 'TXO', 'commodity_id2': '', 'queryDate': query_date, 'MarketCode': '0', 'commodity_idt': 'TXO'}
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5)
+            res.encoding = 'utf-8' # 強制編碼，防止中文亂碼
             if "查無資料" in res.text or len(res.text) < 500: continue 
             dfs = pd.read_html(StringIO(res.text))
             df = dfs[0]
