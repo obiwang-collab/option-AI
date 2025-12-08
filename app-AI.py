@@ -8,71 +8,46 @@ from io import StringIO
 import calendar
 import re
 import google.generativeai as genai
+from openai import OpenAI  # 新增：引入 OpenAI 套件
 
 # --- 頁面設定 ---
-st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (AI 決策版)")
+st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (雙 AI 對決版)")
 TW_TZ = timezone(timedelta(hours=8)) 
 
 # ==========================================
-# 🔑 金鑰設定區
+# 🔑 金鑰設定區 (自動讀取 Secrets 或本地變數)
 # ==========================================
+# 建議在 Streamlit Secrets 設定：
+# GEMINI_API_KEY = "你的Key"
+# OPENAI_API_KEY = "你的Key"
 try:
-    API_KEY = st.secrets["GEMINI_API_KEY"]
+    GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
+    OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", "")
 except:
-    API_KEY = "請輸入你的API_KEY"
+    GEMINI_KEY = ""
+    OPENAI_KEY = ""
 
-# --- 🧠 智慧模型選擇器 (打不死的核心) ---
-def get_best_model(api_key):
-    if not api_key or "請輸入" in api_key:
-        return None, "尚未設定 API Key"
-    
+# --- 🧠 1. Gemini 模型設定 ---
+def get_gemini_model(api_key):
+    if not api_key: return None, "未設定"
     genai.configure(api_key=api_key)
-    
     try:
-        # 1. 直接問 Google 現在有哪些模型活著
-        valid_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                valid_models.append(m.name)
-        
-        # 2. 優先順序策略：Flash (快/便宜) -> Pro (強) -> 任何能用的
-        # 我們搜尋字串，不管版本號怎麼變 (001, 002, latest) 只要有關鍵字就抓
-        target_model = None
-        
-        # 策略 A: 找 Flash
-        for m in valid_models:
-            if 'flash' in m.lower():
-                target_model = m
-                break
-        
-        # 策略 B: 沒 Flash 找 Pro (1.5)
-        if not target_model:
-            for m in valid_models:
-                if 'gemini-1.5-pro' in m.lower():
-                    target_model = m
-                    break
+        # 自動找最佳模型 (Flash -> Pro)
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        for target in ['flash', 'gemini-1.5-pro', 'gemini-pro']:
+            for m in models:
+                if target in m.lower(): return genai.GenerativeModel(m), m
+        return (genai.GenerativeModel(models[0]), models[0]) if models else (None, "無可用模型")
+    except Exception as e: return None, str(e)
 
-        # 策略 C: 還是沒有，找舊版 Pro (gemini-pro)
-        if not target_model:
-            for m in valid_models:
-                if 'gemini-pro' in m.lower():
-                    target_model = m
-                    break
-                    
-        # 策略 D: 真的都沒有，隨便拿第一個
-        if not target_model and valid_models:
-            target_model = valid_models[0]
-
-        if target_model:
-            return genai.GenerativeModel(target_model), target_model
-        else:
-            return None, "找不到任何可用模型 (API Key 可能無權限)"
-
-    except Exception as e:
-        return None, f"連線錯誤: {str(e)}"
+# --- 🧠 2. ChatGPT 模型設定 ---
+def get_openai_client(api_key):
+    if not api_key: return None
+    return OpenAI(api_key=api_key)
 
 # 初始化模型
-model, model_name = get_best_model(API_KEY)
+gemini_model, gemini_name = get_gemini_model(GEMINI_KEY)
+openai_client = get_openai_client(OPENAI_KEY)
 
 # 手動修正結算日
 MANUAL_SETTLEMENT_FIX = {
@@ -211,56 +186,51 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig.update_layout(title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")), xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'), barmode='overlay', legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), height=750, margin=dict(l=40, r=80, t=140, b=60), annotations=annotations, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
-# --- AI 分析函式 (短線結論版) ---
-def ask_gemini_brief(df, taiex_price):
-    if not model:
-        return f"⚠️ 無法啟動分析: {model_name}"
-    
-    try:
-        # 1. 瘦身：只取前15大合約
-        df_ai = df.copy()
-        if 'Amount' in df_ai.columns:
-            df_ai = df_ai.nlargest(15, 'Amount')
-        
-        # 2. 瘦身：只留關鍵欄位
-        keep = ['Strike', 'Type', 'OI', 'Amount']
-        df_ai = df_ai[keep]
-        data_str = df_ai.to_csv(index=False)
-        
-        prompt = f"""
-        你是一個台指期貨交易助手。大盤：{taiex_price}。
-        分析這份籌碼(前15大合約)，直接給出【短線操作建議】。
-        
-        規則：
-        1. 不解釋過程。
-        2. 給結論：偏多/偏空/震盪？
-        3. 給操作建議。
-        4. 100字內。
+# --- 資料準備函式 (供 AI 使用) ---
+def prepare_ai_data(df):
+    df_ai = df.copy()
+    if 'Amount' in df_ai.columns:
+        df_ai = df_ai.nlargest(15, 'Amount') # 取前15大
+    keep = ['Strike', 'Type', 'OI', 'Amount']
+    df_ai = df_ai[keep]
+    return df_ai.to_csv(index=False)
 
-        數據：
-        {data_str}
-        """
-        
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        if "429" in str(e):
-            return "⚠️ 免費額度暫時用完，請稍等 1 分鐘後再試。"
-        return f"分析錯誤 ({str(e)})"
+# --- AI 分析 (Gemini) ---
+def ask_gemini(data_str, taiex_price):
+    if not gemini_model: return "⚠️ 未設定 Gemini Key"
+    try:
+        prompt = f"你是一個交易員。大盤{taiex_price}。根據這份選擇權籌碼(CSV)，直接給出【短線操作建議】。\n規則：1.不解釋過程 2.給結論(偏多/空/震盪) 3.100字內。\n數據：\n{data_str}"
+        return gemini_model.generate_content(prompt).text
+    except Exception as e: return f"Gemini 錯誤: {str(e)}"
+
+# --- AI 分析 (ChatGPT) ---
+def ask_chatgpt(data_str, taiex_price):
+    if not openai_client: return "⚠️ 未設定 OpenAI Key"
+    try:
+        prompt = f"你是一個交易員。大盤{taiex_price}。根據這份選擇權籌碼(CSV)，直接給出【短線操作建議】。\n規則：1.不解釋過程 2.給結論(偏多/空/震盪) 3.100字內。\n數據：\n{data_str}"
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini", # 使用 4o-mini 省錢且快速
+            messages=[
+                {"role": "system", "content": "You are a professional trader."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e: return f"ChatGPT 錯誤: {str(e)}"
 
 # --- 主程式 ---
 def main():
-    st.title("🤖 台指期籌碼戰情室 (AI 決策版)")
+    st.title("🤖 台指期籌碼戰情室 (雙 AI 對決版)")
     
     col_title, col_btn = st.columns([3, 1])
     
     if st.sidebar.button("🔄 重新整理"): st.cache_data.clear(); st.rerun()
 
-    # 顯示目前抓到的模型名稱 (方便除錯)
-    if model:
-        st.sidebar.success(f"AI 就緒: {model_name}")
-    else:
-        st.sidebar.warning(f"AI 未就緒: {model_name}")
+    # 顯示 AI 狀態
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**AI 連線狀態:**")
+    st.sidebar.caption(f"🔵 Gemini: {'✅' if gemini_model else '❌'}")
+    st.sidebar.caption(f"🟢 ChatGPT: {'✅' if openai_client else '❌'}")
 
     with st.spinner('連線期交所中...'):
         df, data_date = get_option_data()
@@ -271,16 +241,36 @@ def main():
     csv = df.to_csv(index=False).encode('utf-8-sig')
     st.sidebar.download_button("📥 下載完整數據", csv, f"option_{data_date.replace('/','')}.csv", "text/csv")
 
-    # --- AI 極簡分析 ---
-    if model:
-        st.markdown("### 💡 AI 短線錦囊")
-        if st.button("✨ 取得操作建議", type="primary"):
-            with st.spinner(f"正在使用 {model_name} 分析..."):
-                advice = ask_gemini_brief(df, taiex_now)
-                st.info(advice)
-    else:
-        st.warning("請在後台設定 Secrets API Key 才能啟用 AI 建議")
+    # --- 雙 AI 分析區 ---
+    st.markdown("### 💡 AI 觀點對決")
+    if st.button("✨ 啟動 AI 雙重分析", type="primary"):
+        if not gemini_model and not openai_client:
+            st.error("請至少設定一個 API Key (Gemini 或 OpenAI)")
+        else:
+            data_str = prepare_ai_data(df)
+            
+            # 建立左右兩欄
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("🔵 Google Gemini")
+                if gemini_model:
+                    with st.spinner("Gemini 分析中..."):
+                        res_gemini = ask_gemini(data_str, taiex_now)
+                        st.info(res_gemini)
+                else:
+                    st.warning("未設定 Gemini Key")
+            
+            with col2:
+                st.subheader("🟢 OpenAI ChatGPT")
+                if openai_client:
+                    with st.spinner("ChatGPT 分析中..."):
+                        res_chatgpt = ask_chatgpt(data_str, taiex_now)
+                        st.success(res_chatgpt)
+                else:
+                    st.warning("未設定 OpenAI Key")
 
+    # 數據指標與圖表 (維持不變)
     total_call_amt = df[df['Type'].str.contains('買|Call', case=False, na=False)]['Amount'].sum()
     total_put_amt = df[df['Type'].str.contains('賣|Put', case=False, na=False)]['Amount'].sum()
     pc_ratio_amt = (total_put_amt / total_call_amt) * 100 if total_call_amt > 0 else 0
