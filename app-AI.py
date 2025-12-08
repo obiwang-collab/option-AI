@@ -16,33 +16,22 @@ TW_TZ = timezone(timedelta(hours=8))
 # ==========================================
 # 🔑 金鑰設定區 (雲端安全版)
 # ==========================================
-# 在本地執行時，如果沒有設定 secrets，會嘗試讀取這裡的變數
-# 但強烈建議在 Streamlit Cloud 後台設定 Secrets
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
-    # 如果你是要在本地測試，請暫時將 Key 貼在下方引號中
-    # 上傳到 GitHub 前請務必刪除，以免外洩！
+    # 本地測試時填入，上傳前請清空
     API_KEY = "請輸入你的API_KEY"
 
-# --- 智慧模型設定 ---
+# --- 智慧模型設定 (強制使用 Flash 省流量) ---
 def configure_gemini(api_key):
     if not api_key or "請輸入" in api_key:
         return None, "尚未設定 API Key"
     
     genai.configure(api_key=api_key)
     try:
-        # 自動偵測可用模型
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 優先順序: Flash -> Pro -> 其他
-        for target in ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']:
-            for m in available_models:
-                if target in m: return genai.GenerativeModel(m), m
-        
-        # 兜底
-        if available_models: return genai.GenerativeModel(available_models[0]), available_models[0]
-        return None, "無可用模型"
+        # 強制指定 gemini-1.5-flash (速度快、額度高)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        return model, "gemini-1.5-flash"
     except Exception as e:
         return None, f"連線錯誤: {str(e)}"
 
@@ -186,31 +175,36 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig.update_layout(title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")), xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'), barmode='overlay', legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), height=750, margin=dict(l=40, r=80, t=140, b=60), annotations=annotations, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
-# --- AI 分析函式 (極簡版) ---
+# --- AI 分析函式 (超輕量化版) ---
 def ask_gemini_brief(df, taiex_price):
     if not model:
         return "⚠️ 請先設定 API Key"
     
     try:
-        # 只取 OI 或 Amount 較大的前 40 筆資料，節省運算
+        # --- 關鍵優化：資料大瘦身 ---
         df_ai = df.copy()
+        
+        # 1. 只留最重要的合約 (金額最大的前 15 筆)
+        # 這樣 Token 數會從 2000 降到 <500
         if 'Amount' in df_ai.columns:
-            df_ai = df_ai.nlargest(40, 'Amount')
+            df_ai = df_ai.nlargest(15, 'Amount')
+        
+        # 2. 只留關鍵欄位
+        keep_cols = ['Strike', 'Type', 'OI', 'Amount'] 
+        # 如果有其他欄位就丟掉，節省 Token
+        df_ai = df_ai[keep_cols]
         
         data_str = df_ai.to_csv(index=False)
         
-        # --- 關鍵修改：要求 AI 只回答結論 ---
         prompt = f"""
-        你是一個台指期貨交易助手。
-        現在大盤現貨價格：{taiex_price}。
-        
-        請分析這份選擇權籌碼 (CSV)，並直接給出【短線操作建議】。
+        你是一個台指期貨交易助手。大盤：{taiex_price}。
+        請根據此選擇權籌碼(前15大合約)，直接給出【短線操作建議】。
         
         規則：
-        1. **不要** 解釋你的分析過程 (不要提P/C ratio、不要提支撐壓力位怎麼算)。
-        2. **直接告訴我結論**：市場目前是偏多、偏空、還是震盪？
-        3. **給出具體建議**：例如「拉回找買點」、「反彈空」、「區間操作」等。
-        4. 字數控制在 100 字以內，語氣簡潔有力。
+        1. 不要解釋過程。
+        2. 直接給結論：偏多/偏空/震盪？
+        3. 給出具體建議 (如：拉回買、反彈空)。
+        4. 100字內。
 
         數據：
         {data_str}
@@ -219,14 +213,14 @@ def ask_gemini_brief(df, taiex_price):
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"分析忙碌中 ({str(e)})"
+        if "429" in str(e):
+            return "⚠️ 免費額度暫時用完，請稍等 1 分鐘後再試。"
+        return f"分析錯誤 ({str(e)})"
 
 # --- 主程式 ---
 def main():
     st.title("🤖 台指期籌碼戰情室 (AI 決策版)")
     
-    # 網頁版不需要本地存檔，保留下載按鈕即可
-    # 增加一個 AI 按鈕在標題旁
     col_title, col_btn = st.columns([3, 1])
     
     if st.sidebar.button("🔄 重新整理"): st.cache_data.clear(); st.rerun()
@@ -237,7 +231,6 @@ def main():
 
     if df is None: st.error("查無資料"); return
 
-    # --- 下載按鈕 (側邊欄) ---
     csv = df.to_csv(index=False).encode('utf-8-sig')
     st.sidebar.download_button("📥 下載完整數據", csv, f"option_{data_date.replace('/','')}.csv", "text/csv")
 
@@ -247,12 +240,10 @@ def main():
         if st.button("✨ 取得操作建議", type="primary"):
             with st.spinner("AI 正在擬定策略..."):
                 advice = ask_gemini_brief(df, taiex_now)
-                # 使用 info 框框顯示，比較像「錦囊」
                 st.info(advice)
     else:
         st.warning("請在後台設定 Secrets API Key 才能啟用 AI 建議")
 
-    # 數據指標
     total_call_amt = df[df['Type'].str.contains('買|Call', case=False, na=False)]['Amount'].sum()
     total_put_amt = df[df['Type'].str.contains('賣|Put', case=False, na=False)]['Amount'].sum()
     pc_ratio_amt = (total_put_amt / total_call_amt) * 100 if total_call_amt > 0 else 0
@@ -265,7 +256,6 @@ def main():
     c4.metric("資料來源日期", data_date)
     st.markdown("---")
 
-    # 繪圖
     unique_codes = df['Month'].unique()
     all_contracts = []
     for code in unique_codes:
