@@ -14,29 +14,65 @@ st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (AI 決�
 TW_TZ = timezone(timedelta(hours=8)) 
 
 # ==========================================
-# 🔑 金鑰設定區 (雲端安全版)
+# 🔑 金鑰設定區
 # ==========================================
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
-    # 本地測試時填入，上傳前請清空
     API_KEY = "請輸入你的API_KEY"
 
-# --- 智慧模型設定 (強制使用 Flash 省流量) ---
-def configure_gemini(api_key):
+# --- 🧠 智慧模型選擇器 (打不死的核心) ---
+def get_best_model(api_key):
     if not api_key or "請輸入" in api_key:
         return None, "尚未設定 API Key"
     
     genai.configure(api_key=api_key)
+    
     try:
-        # 強制指定 gemini-1.5-flash (速度快、額度高)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        return model, "gemini-1.5-flash"
+        # 1. 直接問 Google 現在有哪些模型活著
+        valid_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                valid_models.append(m.name)
+        
+        # 2. 優先順序策略：Flash (快/便宜) -> Pro (強) -> 任何能用的
+        # 我們搜尋字串，不管版本號怎麼變 (001, 002, latest) 只要有關鍵字就抓
+        target_model = None
+        
+        # 策略 A: 找 Flash
+        for m in valid_models:
+            if 'flash' in m.lower():
+                target_model = m
+                break
+        
+        # 策略 B: 沒 Flash 找 Pro (1.5)
+        if not target_model:
+            for m in valid_models:
+                if 'gemini-1.5-pro' in m.lower():
+                    target_model = m
+                    break
+
+        # 策略 C: 還是沒有，找舊版 Pro (gemini-pro)
+        if not target_model:
+            for m in valid_models:
+                if 'gemini-pro' in m.lower():
+                    target_model = m
+                    break
+                    
+        # 策略 D: 真的都沒有，隨便拿第一個
+        if not target_model and valid_models:
+            target_model = valid_models[0]
+
+        if target_model:
+            return genai.GenerativeModel(target_model), target_model
+        else:
+            return None, "找不到任何可用模型 (API Key 可能無權限)"
+
     except Exception as e:
         return None, f"連線錯誤: {str(e)}"
 
 # 初始化模型
-model, model_name = configure_gemini(API_KEY)
+model, model_name = get_best_model(API_KEY)
 
 # 手動修正結算日
 MANUAL_SETTLEMENT_FIX = {
@@ -175,35 +211,30 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig.update_layout(title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")), xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'), barmode='overlay', legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), height=750, margin=dict(l=40, r=80, t=140, b=60), annotations=annotations, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
-# --- AI 分析函式 (超輕量化版) ---
+# --- AI 分析函式 (短線結論版) ---
 def ask_gemini_brief(df, taiex_price):
     if not model:
-        return "⚠️ 請先設定 API Key"
+        return f"⚠️ 無法啟動分析: {model_name}"
     
     try:
-        # --- 關鍵優化：資料大瘦身 ---
+        # 1. 瘦身：只取前15大合約
         df_ai = df.copy()
-        
-        # 1. 只留最重要的合約 (金額最大的前 15 筆)
-        # 這樣 Token 數會從 2000 降到 <500
         if 'Amount' in df_ai.columns:
             df_ai = df_ai.nlargest(15, 'Amount')
         
-        # 2. 只留關鍵欄位
-        keep_cols = ['Strike', 'Type', 'OI', 'Amount'] 
-        # 如果有其他欄位就丟掉，節省 Token
-        df_ai = df_ai[keep_cols]
-        
+        # 2. 瘦身：只留關鍵欄位
+        keep = ['Strike', 'Type', 'OI', 'Amount']
+        df_ai = df_ai[keep]
         data_str = df_ai.to_csv(index=False)
         
         prompt = f"""
         你是一個台指期貨交易助手。大盤：{taiex_price}。
-        請根據此選擇權籌碼(前15大合約)，直接給出【短線操作建議】。
+        分析這份籌碼(前15大合約)，直接給出【短線操作建議】。
         
         規則：
-        1. 不要解釋過程。
-        2. 直接給結論：偏多/偏空/震盪？
-        3. 給出具體建議 (如：拉回買、反彈空)。
+        1. 不解釋過程。
+        2. 給結論：偏多/偏空/震盪？
+        3. 給操作建議。
         4. 100字內。
 
         數據：
@@ -225,6 +256,12 @@ def main():
     
     if st.sidebar.button("🔄 重新整理"): st.cache_data.clear(); st.rerun()
 
+    # 顯示目前抓到的模型名稱 (方便除錯)
+    if model:
+        st.sidebar.success(f"AI 就緒: {model_name}")
+    else:
+        st.sidebar.warning(f"AI 未就緒: {model_name}")
+
     with st.spinner('連線期交所中...'):
         df, data_date = get_option_data()
         taiex_now = get_realtime_data()
@@ -238,7 +275,7 @@ def main():
     if model:
         st.markdown("### 💡 AI 短線錦囊")
         if st.button("✨ 取得操作建議", type="primary"):
-            with st.spinner("AI 正在擬定策略..."):
+            with st.spinner(f"正在使用 {model_name} 分析..."):
                 advice = ask_gemini_brief(df, taiex_now)
                 st.info(advice)
     else:
