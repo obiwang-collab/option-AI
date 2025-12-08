@@ -196,27 +196,92 @@ def prepare_ai_data(df):
     df_ai = df_ai[keep]
     return df_ai.to_csv(index=False)
 
+# --- helper：從 df 與 data_date 找出接下來要畫的合約（與你原本邏輯一致） ---
+def get_next_contracts(df, data_date):
+    unique_codes = df['Month'].unique()
+    all_contracts = []
+    for code in unique_codes:
+        s_date_str = get_settlement_date(code)
+        if s_date_str == "9999/99/99" or s_date_str <= data_date: continue
+        all_contracts.append({'code': code, 'date': s_date_str})
+    all_contracts.sort(key=lambda x: x['date'])
+    
+    plot_targets = []
+    if all_contracts:
+        nearest = all_contracts[0]
+        plot_targets.append({'title': '最近結算', 'info': nearest})
+        monthly = next((c for c in all_contracts if len(c['code']) == 6), None)
+        if monthly:
+            if monthly['code'] != nearest['code']: plot_targets.append({'title': '當月月選', 'info': monthly})
+            else: plot_targets[0]['title'] = '最近結算 (同月選)'
+    return plot_targets
+
+# --- 統一 prompt 建構器（Gemini / ChatGPT 共用） ---
+def build_ai_prompt(data_str, taiex_price, contract_info, data_date):
+    """
+    contract_info: {'code':..., 'date':...} or None
+    data_date: string like '2025/12/08'
+    """
+    contract_note = "無法判斷要結算的合約資訊" 
+    if contract_info:
+        contract_note = f"系統判斷下一個即將結算合約為：{contract_info.get('code')}，結算日：{contract_info.get('date')}。"
+    prompt = f"""
+你是一位專業的台指期 / 選擇權交易員助理。注意：本 prompt 的資料由系統端【已經判斷並過濾】為「下一個即將結算的合約」資料（包含週選與月選判斷），**請勿重新推斷或更改結算日**。若你發現資料日期與系統標注的結算日不一致，請直接回報「資料日期異常」而非自行假設。
+
+系統指示：
+1) 本資料來源日期（期交所頁面日期）: {data_date}
+2) 大盤現貨：{taiex_price}
+3) {contract_note}
+4) 你會收到 CSV（前15大籌碼）：請以該 CSV 做分析，不要重新判斷結算日或挑出別的月份。若 CSV 包含多個月份/週別，請以上面系統標記的合約為第一優先。
+5) 輸出規則（一定要遵守）：
+   - 只給出結論：**偏多 / 偏空 / 震盪**（一行）
+   - 接著 30~80 字的簡短理由（條列式或一句話）
+   - 不要輸出過程計算
+   - 若你懷疑資料不是「尚未結算」的最新資料，回答要以「⚠️ 資料日期異常」為開頭
+
+下面是 CSV（前15大），格式：Strike,Type,OI,Amount
+{data_str}
+"""
+    return prompt.strip()
+
 # --- AI 分析 (Gemini) ---
-def ask_gemini(data_str, taiex_price):
+def ask_gemini(prompt_text):
     if not gemini_model: return "⚠️ 未設定 Gemini Key"
     try:
-        prompt = f"你是一個交易員。大盤{taiex_price}。根據這份選擇權籌碼(CSV)，直接給出【短線操作建議】。\n規則：1.不解釋過程 2.給結論(偏多/空/震盪) 3.100字內。\n數據：\n{data_str}"
-        return gemini_model.generate_content(prompt).text
-    except Exception as e: return f"Gemini 錯誤: {str(e)}"
+        # Gemini: 使用 generate_content，直接拿 text
+        res = gemini_model.generate_content(prompt_text)
+        # Some Gemini SDKs return object with .text, or .candidates[0].content - handle both
+        if hasattr(res, "text"):
+            return res.text
+        if hasattr(res, "candidates") and len(res.candidates) > 0:
+            return getattr(res.candidates[0], "content", str(res.candidates[0]))
+        return str(res)
+    except Exception as e:
+        return f"Gemini 錯誤: {str(e)}"
 
-# --- AI 分析 (ChatGPT - 防呆加強版) ---
-def ask_chatgpt(data_str, taiex_price):
+# --- AI 分析 (ChatGPT - 使用 gpt-4o-mini) ---
+def ask_chatgpt(prompt_text):
     if not openai_client: return "⚠️ 未設定 OpenAI Key"
     try:
-        prompt = f"你是一個交易員。大盤{taiex_price}。根據這份選擇權籌碼(CSV)，直接給出【短線操作建議】。\n規則：1.不解釋過程 2.給結論(偏多/空/震盪) 3.100字內。\n數據：\n{data_str}"
+        # Using the same chat.completions.create pattern you had, with chosen model gpt-4o-mini
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini", 
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a professional trader."},
-                {"role": "user", "content": prompt}
-            ]
+                {"role": "user", "content": prompt_text}
+            ],
+            # optional: 可以設定 max_tokens, temperature 等
+            # max_tokens=200,
+            # temperature=0.0
         )
-        return response.choices[0].message.content
+        # 對於不同 SDK 回傳格式，盡量穩健取值
+        try:
+            return response.choices[0].message.content
+        except:
+            try:
+                return response.choices[0].message['content']
+            except:
+                return str(response)
     except Exception as e:
         error_msg = str(e)
         # --- 防呆判斷 ---
@@ -250,13 +315,21 @@ def main():
     csv = df.to_csv(index=False).encode('utf-8-sig')
     st.sidebar.download_button("📥 下載完整數據", csv, f"option_{data_date.replace('/','')}.csv", "text/csv")
 
+    # --- 預先計算接下來要使用的合約（同你原本邏輯） ---
+    plot_targets = get_next_contracts(df, data_date)
+
     # --- 雙 AI 分析區 ---
     st.markdown("### 💡 AI 觀點對決")
     if st.button("✨ 啟動 AI 雙重分析", type="primary"):
         if not gemini_model and not openai_client:
             st.error("請至少設定一個 API Key")
         else:
+            # 以你原本的 prepare_ai_data 準備 csv（前15筆）
             data_str = prepare_ai_data(df)
+            # 選擇要給 AI 的合約資訊（若有多個 plot_targets，就取第一個）
+            contract_info = plot_targets[0]['info'] if plot_targets else None
+
+            prompt_text = build_ai_prompt(data_str, taiex_now, contract_info, data_date)
             
             # 建立左右兩欄
             col1, col2 = st.columns(2)
@@ -265,7 +338,7 @@ def main():
                 st.subheader("🔵 Google Gemini")
                 if gemini_model:
                     with st.spinner("Gemini 分析中..."):
-                        res_gemini = ask_gemini(data_str, taiex_now)
+                        res_gemini = ask_gemini(prompt_text)
                         st.info(res_gemini)
                 else:
                     st.warning("未設定 Gemini Key")
@@ -274,7 +347,7 @@ def main():
                 st.subheader("🟢 OpenAI ChatGPT")
                 if openai_client:
                     with st.spinner("ChatGPT 分析中..."):
-                        res_chatgpt = ask_chatgpt(data_str, taiex_now)
+                        res_chatgpt = ask_chatgpt(prompt_text)
                         # 如果是額度不足警告，顯示黃色；正常則顯示綠色
                         if "⚠️" in res_chatgpt:
                              st.warning(res_chatgpt)
@@ -296,24 +369,8 @@ def main():
     c4.metric("資料來源日期", data_date)
     st.markdown("---")
 
-    unique_codes = df['Month'].unique()
-    all_contracts = []
-    for code in unique_codes:
-        s_date_str = get_settlement_date(code)
-        if s_date_str == "9999/99/99" or s_date_str <= data_date: continue
-        all_contracts.append({'code': code, 'date': s_date_str})
-    all_contracts.sort(key=lambda x: x['date'])
-    
-    plot_targets = []
-    if all_contracts:
-        nearest = all_contracts[0]
-        plot_targets.append({'title': '最近結算', 'info': nearest})
-        monthly = next((c for c in all_contracts if len(c['code']) == 6), None)
-        if monthly:
-            if monthly['code'] != nearest['code']: plot_targets.append({'title': '當月月選', 'info': monthly})
-            else: plot_targets[0]['title'] = '最近結算 (同月選)'
-
-    cols = st.columns(len(plot_targets))
+    # 若 plot_targets 原本是要顯示的合約，依舊照原本畫圖
+    cols = st.columns(len(plot_targets)) if plot_targets else []
     for i, target in enumerate(plot_targets):
         with cols[i]:
             m_code = target['info']['code']
@@ -322,7 +379,7 @@ def main():
             sub_call = df_target[df_target['Type'].str.contains('Call|買', case=False, na=False)]['Amount'].sum()
             sub_put = df_target[df_target['Type'].str.contains('Put|賣', case=False, na=False)]['Amount'].sum()
             sub_ratio = (sub_put / sub_call * 100) if sub_call > 0 else 0
-            title_text = f"<b>【{target['title']}】 {m_code}</b><br><span style='font-size: 14px;'>結算: {s_date}</span><br><span style='font-size: 14px;'>P/C金額比: {sub_ratio:.1f}% ({'偏多' if sub_ratio > 100 else '偏空'})</span>"
+            title_text = f"<b> {m_code}</b><br><span style='font-size: 14px;'>結算: {s_date}</span><br><span style='font-size: 14px;'>P/C金額比: {sub_ratio:.1f}% ({'偏多' if sub_ratio > 100 else '偏空'})</span>"
             st.plotly_chart(plot_tornado_chart(df_target, title_text, taiex_now), use_container_width=True)
 
 if __name__ == "__main__":
