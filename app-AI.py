@@ -10,7 +10,7 @@ import re
 import google.generativeai as genai
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor
-import streamlit.components.v1 as components # 引入廣告元件模組
+import streamlit.components.v1 as components 
 
 # --- 頁面設定 ---
 st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (莊家控盤版)")
@@ -31,11 +31,9 @@ def get_gemini_model(api_key):
     if not api_key: return None, "未設定"
     genai.configure(api_key=api_key)
     try:
-        # 強制指定目前免費額度最高的模型
         target_model_name = 'gemini-1.5-flash'
         return genai.GenerativeModel(target_model_name), target_model_name
     except Exception as e:
-        # 失敗時的備用邏輯
         try:
             models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             for target in ['flash', 'gemini-1.5-pro']:
@@ -260,7 +258,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
 
     fig.update_layout(
         title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")), 
-        xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), 
+        xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.75)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), 
         yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'), 
         barmode='overlay', 
         legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), 
@@ -364,18 +362,29 @@ def ask_chatgpt(prompt_text):
         if "insufficient_quota" in str(e): return "⚠️ OpenAI 額度不足"
         return f"ChatGPT 錯誤: {str(e)}"
 
+# --- AdSense 驗證碼 ---
+ADSENSE_VERIFICATION_CODE = """
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX" crossorigin="anonymous"></script>
+"""
+# 請注意：請將 ca-pub-XXXXXXXXXXXXXXXX 替換為您的 AdSense 發布商 ID。
+
 # --- 主程式 ---
 def main():
     # 確保 Session State 狀態初始化
     if 'analysis_unlocked' not in st.session_state:
         st.session_state.analysis_unlocked = False
-        st.session_state.show_analysis_results = False # 控制是否顯示分析結果
+        st.session_state.show_analysis_results = False 
+
+    # ⭐ 步驟 1: 嵌入 AdSense 驗證碼 (放在 <head> 區塊的模擬) ⭐
+    # 用於網站審核，確保 Google 能夠驗證您的網站擁有權。
+    st.markdown(ADSENSE_VERIFICATION_CODE, unsafe_allow_html=True)
+    # ----------------------------------------------------------------
 
     st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
     
     col_title, col_btn = st.columns([3, 1])
     if st.sidebar.button("🔄 重新整理"): 
-        st.session_state.analysis_unlocked = False # 重設解鎖狀態
+        st.session_state.analysis_unlocked = False 
         st.session_state.show_analysis_results = False 
         st.cache_data.clear()
         st.rerun()
@@ -409,7 +418,7 @@ def main():
     c2.metric("大盤現貨", f"{int(taiex_now) if taiex_now else 'N/A'}")
     trend = "偏多" if pc_ratio_amt > 100 else "偏空"
     c3.metric("全市場 P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}格局", delta_color="normal" if pc_ratio_amt > 100 else "inverse")
-    c4.metric("資料來源日期", f"{data_date} (與 {date_yesterday} 比較)")
+    c4.metric("資料來源日期", f"{data_date} (與 {df_yesterday['date'].iloc[0] if 'date' in df_yesterday.columns else '前一日'} 比較)")
 
     st.markdown("---")
     
@@ -420,7 +429,6 @@ def main():
         st.markdown("### 🎲 莊家控盤劇本 (雙 AI 預測)")
         analyze_button = st.button("🧛‍♂️ 啟動 AI 控盤分析", type="primary", disabled=False)
         
-        # 如果用戶點擊分析按鈕
         if analyze_button:
             st.session_state.show_analysis_results = True
             st.rerun()
@@ -435,7 +443,7 @@ def main():
         
         if start_countdown:
             placeholder = st.empty()
-            wait_time = 8 # 設定等待秒數 (可調整)
+            wait_time = 8 
             
             for i in range(wait_time, 0, -1):
                 placeholder.warning(f"⏳ 請勿離開頁面，分析功能將在 {i} 秒後自動解鎖...")
@@ -445,9 +453,8 @@ def main():
             placeholder.success("✅ AI 分析功能已解鎖！請點擊上方的綠色按鈕執行分析。")
             st.rerun()
 
-    # --- AI 執行與結果顯示邏輯 (只有在 st.session_state.show_analysis_results 為 True 時執行) ---
+    # --- AI 執行與結果顯示邏輯 ---
     if st.session_state.show_analysis_results:
-        # 確保在分析時，AI 分析區塊的標題仍然顯示
         if not st.session_state.analysis_unlocked:
             st.markdown("### 🎲 莊家控盤劇本 (雙 AI 預測)")
 
@@ -496,7 +503,7 @@ def main():
                 else:
                     st.warning("未設定 Key")
     
-    # --- 圖表顯示區 (保持不變) ---
+    # --- 圖表顯示區 ---
     plot_targets = get_next_contracts(df, data_date)
     cols = st.columns(len(plot_targets)) if plot_targets else []
     for i, target in enumerate(plot_targets):
