@@ -55,20 +55,26 @@ openai_client = get_openai_client(OPENAI_KEY)
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
 
-# ⭐⭐⭐ AdSense / GA 最終整合代碼區塊 (修正腳本衝突) ⭐⭐⭐
+# ⭐⭐⭐ AdSense / GA 最終整合代碼區塊 (修正 Meta 標記嵌入) ⭐⭐⭐
 
 # 1. 您的 AdSense 發布商 ID
 ADSENSE_PUB_ID = 'ca-pub-4585150092118682'
 ADSENSE_SLOT_ID = 'YOUR_AD_SLOT_ID_HERE'
 GA_ID = 'G-YWE11P87TO' 
 
-
-# 2. AdSense 驗證/主載入腳本 (移除 GA 腳本，避免衝突)
+# 2. AdSense 驗證/主載入腳本 (用於載入廣告服務)
 ADSENSE_VERIFICATION_SCRIPT = f"""
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}" crossorigin="anonymous"></script>
 """
+# 備註：GA 腳本不需要單獨嵌入，AdSense 腳本會處理追蹤。
 
-# 3. 廣告單元碼 (用於顯示廣告)
+# 3. AdSense Meta 驗證標記 (用於網站擁有權驗證)
+# 請確認 content="" 裡面的 ID 與 AdSense 頁面上的 ID 完全一致。
+META_TAG_CODE = f"""
+<meta name="google-adsense-account" content="{ADSENSE_PUB_ID}">
+"""
+
+# 4. 廣告單元碼 (用於顯示廣告)
 ADSENSE_CODE = f"""
 <div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
     <ins class="adsbygoogle"
@@ -84,6 +90,7 @@ ADSENSE_CODE = f"""
 </div>
 """
 # ----------------------------------------------------------------------
+
 
 def show_ad_component():
     """在 Streamlit 中嵌入廣告程式碼"""
@@ -392,9 +399,12 @@ def main():
         st.session_state.analysis_unlocked = False
         st.session_state.show_analysis_results = False 
 
-    # ⭐ 步驟 1: 嵌入 AdSense/GA 驗證碼 (使用 components.html 強化載入) ⭐
-    # 這是最終優化版本，將 AdSense 驗證和 GA 腳本一起載入
+    # ⭐ 步驟 1: 嵌入 AdSense 主腳本 (用於載入服務，無衝突)
     components.html(ADSENSE_VERIFICATION_SCRIPT, height=0, width=0)
+    
+    # ⭐ 步驟 2: 嵌入 AdSense Meta 驗證標記 (用於網站擁有權驗證)
+    # 由於 Streamlit 沒有 <head> 區塊，st.markdown 是嵌入簡單 Meta 標記的最佳方式
+    st.markdown(META_TAG_CODE, unsafe_allow_html=True)
     # ----------------------------------------------------------------
 
     st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
