@@ -55,51 +55,61 @@ openai_client = get_openai_client(OPENAI_KEY)
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
 
-# ⭐⭐⭐ AdSense / GA 最終整合代碼區塊 (修正 Meta 標記嵌入) ⭐⭐⭐
+# ⭐⭐⭐ AdSense 整合代碼區塊（修正版）⭐⭐⭐
 
-# 1. 您的 AdSense 發布商 ID
+# 1. 您的 AdSense 發布商 ID (請替換為您的實際 ID)
 ADSENSE_PUB_ID = 'ca-pub-4585150092118682'
-ADSENSE_SLOT_ID = 'YOUR_AD_SLOT_ID_HERE'
-GA_ID = 'G-YWE11P87TO' 
 
-# 2. AdSense 驗證/主載入腳本 (用於載入廣告服務)
-ADSENSE_VERIFICATION_SCRIPT = f"""
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}" crossorigin="anonymous"></script>
-"""
-# 備註：GA 腳本不需要單獨嵌入，AdSense 腳本會處理追蹤。
-
-# 3. AdSense Meta 驗證標記 (用於網站擁有權驗證)
-# 請確認 content="" 裡面的 ID 與 AdSense 頁面上的 ID 完全一致。
-META_TAG_CODE = f"""
-<meta name="google-adsense-account" content="{ADSENSE_PUB_ID}">
+# 2. AdSense 自動廣告代碼（推薦用於審核階段）
+ADSENSE_AUTO_ADS = f"""
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+     crossorigin="anonymous"></script>
 """
 
-# 4. 廣告單元碼 (用於顯示廣告)
-ADSENSE_CODE = f"""
-<div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
+# 3. 顯示式廣告單元（需要先在 AdSense 後台創建廣告單元獲取 data-ad-slot）
+# 注意：審核期間建議使用自動廣告，通過後再添加顯示式廣告
+def get_display_ad_code(ad_slot_id):
+    """生成顯示式廣告代碼"""
+    return f"""
     <ins class="adsbygoogle"
          style="display:block"
          data-ad-client="{ADSENSE_PUB_ID}"
-         data-ad-slot="{ADSENSE_SLOT_ID}" 
+         data-ad-slot="{ad_slot_id}"
          data-ad-format="auto"
          data-full-width-responsive="true"></ins>
     <script>
          (adsbygoogle = window.adsbygoogle || []).push({{}});
     </script>
-    <h3>【廣告模擬區，請替換上方程式碼】</h3> 
+    """
+
+# 4. 佔位廣告區塊（審核期間使用，避免顯示錯誤）
+PLACEHOLDER_AD = """
+<div style='background-color: #f8f9fa; padding: 40px 20px; border-radius: 8px; text-align: center; 
+            border: 1px solid #dee2e6; min-height: 250px; display: flex; align-items: center; justify-content: center;'>
+    <div>
+        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-bottom: 15px; opacity: 0.3;">
+            <rect x="3" y="3" width="18" height="18" rx="2" stroke="#6c757d" stroke-width="2"/>
+            <path d="M3 9h18M9 3v18" stroke="#6c757d" stroke-width="2"/>
+        </svg>
+        <p style='color: #6c757d; font-size: 14px; margin: 0;'>廣告位置</p>
+        <p style='color: #adb5bd; font-size: 12px; margin: 5px 0 0 0;'>AdSense 審核通過後將顯示廣告</p>
+    </div>
 </div>
 """
+
+def inject_adsense_head():
+    """注入 AdSense 代碼到頁面（僅一次）"""
+    # 使用 st.components.html 注入自動廣告腳本
+    components.html(ADSENSE_AUTO_ADS, height=0, width=0)
+
+def show_ad_placeholder():
+    """顯示廣告佔位符"""
+    st.markdown(PLACEHOLDER_AD, unsafe_allow_html=True)
+
 # ----------------------------------------------------------------------
 
 
-def show_ad_component():
-    """在 Streamlit 中嵌入廣告程式碼"""
-    components.html(
-        ADSENSE_CODE,
-        height=200, 
-    )
-
-# --- 核心函式 (略) ---
+# --- 核心函式 ---
 def get_settlement_date(contract_code):
     code = str(contract_code).strip().upper()
     for key, fix_date in MANUAL_SETTLEMENT_FIX.items():
@@ -399,14 +409,9 @@ def main():
         st.session_state.analysis_unlocked = False
         st.session_state.show_analysis_results = False 
 
-    # ⭐ 步驟 1: 嵌入 AdSense 主腳本 (用於載入服務，無衝突)
-    components.html(ADSENSE_VERIFICATION_SCRIPT, height=0, width=0)
+    # ⭐ 注入 AdSense 代碼（僅在頁面加載時執行一次）
+    inject_adsense_head()
     
-    # ⭐ 步驟 2: 嵌入 AdSense Meta 驗證標記 (用於網站擁有權驗證)
-    # 由於 Streamlit 沒有 <head> 區塊，st.markdown 是嵌入簡單 Meta 標記的最佳方式
-    st.markdown(META_TAG_CODE, unsafe_allow_html=True)
-    # ----------------------------------------------------------------
-
     st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
     
     col_title, col_btn = st.columns([3, 1])
@@ -449,8 +454,7 @@ def main():
 
     st.markdown("---")
     
-    # --- ⭐⭐ 方案 A 延遲解鎖邏輯 ⭐⭐ ---
-
+    # --- 廣告與解鎖邏輯 ---
     if st.session_state.analysis_unlocked:
         # 解鎖後：顯示 AI 分析區塊
         st.markdown("### 🎲 莊家控盤劇本 (雙 AI 預測)")
@@ -462,87 +466,15 @@ def main():
 
     else:
         # 未解鎖：顯示廣告和倒數計時
-        st.markdown("### 🔓 觀看廣告解鎖 AI 分析 (延遲模式)")
+        st.markdown("### 🔓 觀看廣告解鎖 AI 分析")
+        st.info("💡 **提示**：此網站使用 Google AdSense 提供免費服務。AdSense 審核通過後，此處將顯示廣告。")
         
-        show_ad_component()
+        # 顯示廣告佔位符
+        show_ad_placeholder()
         
-        start_countdown = st.button("點此開始倒數計時 (解鎖分析)", key="start_timer", type="secondary")
+        st.markdown("---")
+        
+        start_countdown = st.button("⏱️ 點此開始倒數解鎖 AI 分析功能", key="start_timer", type="secondary")
         
         if start_countdown:
-            placeholder = st.empty()
-            wait_time = 8 
-            
-            for i in range(wait_time, 0, -1):
-                placeholder.warning(f"⏳ 請勿離開頁面，分析功能將在 {i} 秒後自動解鎖...")
-                time.sleep(1)
-            
-            st.session_state.analysis_unlocked = True
-            placeholder.success("✅ AI 分析功能已解鎖！請點擊上方的綠色按鈕執行分析。")
-            st.rerun()
-
-    # --- AI 執行與結果顯示邏輯 ---
-    if st.session_state.show_analysis_results:
-        if not st.session_state.analysis_unlocked:
-            st.markdown("### 🎲 莊家控盤劇本 (雙 AI 預測)")
-
-        if not gemini_model and not openai_client:
-            st.error("請至少設定一個 API Key")
-        else:
-            data_str = prepare_ai_data(df) 
-            plot_targets = get_next_contracts(df, data_date) 
-            contract_info = plot_targets[0]['info'] if plot_targets else None
-            prompt_text = build_ai_prompt(data_str, taiex_now, contract_info)
-
-            with st.spinner("AI 正在計算最大痛點與獵殺區間..."):
-                gemini_result = None
-                chatgpt_result = None
-
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    futures = {}
-                    if gemini_model: futures['gemini'] = executor.submit(ask_gemini, prompt_text)
-                    if openai_client: futures['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
-
-                    for key, future in futures.items():
-                        if key == 'gemini': gemini_result = future.result()
-                        elif key == 'chatgpt': chatgpt_result = future.result()
-
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("🔵 Google Gemini")
-                if gemini_model:
-                    if gemini_result:
-                        st.info(gemini_result)
-                    else:
-                        st.warning("無回應 (可能觸發安全限制或 API 額度用罄)")
-                else:
-                    st.warning("未設定 Key")
-
-            with col2:
-                st.subheader("🟢 ChatGPT")
-                if openai_client:
-                    if chatgpt_result and "⚠️" in chatgpt_result:
-                        st.warning(chatgpt_result)
-                    elif chatgpt_result:
-                        st.success(chatgpt_result)
-                    else:
-                        st.warning("無回應")
-                else:
-                    st.warning("未設定 Key")
-    
-    # --- 圖表顯示區 ---
-    plot_targets = get_next_contracts(df, data_date)
-    cols = st.columns(len(plot_targets)) if plot_targets else []
-    for i, target in enumerate(plot_targets):
-        with cols[i]:
-            m_code = target['info']['code']
-            s_date = target['info']['date']
-            df_target = df[df['Month'] == m_code]
-            sub_call = df_target[df_target['Type'].str.contains('Call|買', case=False, na=False)]['Amount'].sum()
-            sub_put = df_target[df_target['Type'].str.contains('Put|賣', case=False, na=False)]['Amount'].sum()
-            sub_ratio = (sub_put / sub_call * 100) if sub_call > 0 else 0
-            title_text = (f"<b> {m_code}</b><br><span style='font-size: 14px;'>結算: {s_date}</span><br><span style='font-size: 14px;'>P/C金額比: {sub_ratio:.1f}% ({'偏多' if sub_ratio > 100 else '偏空'})</span>")
-            st.plotly_chart(plot_tornado_chart(df_target, title_text, taiex_now), use_container_width=True)
-
-if __name__ == "__main__":
-    main()
+            placeholder =
