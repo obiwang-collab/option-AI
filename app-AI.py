@@ -55,56 +55,123 @@ openai_client = get_openai_client(OPENAI_KEY)
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
 
-# ⭐⭐⭐ AdSense 整合代碼區塊（修正版）⭐⭐⭐
+# ⭐⭐⭐ AdSense 整合代碼區塊（修正版 - 確保 Google 可檢測）⭐⭐⭐
 
-# 1. 您的 AdSense 發布商 ID (請替換為您的實際 ID)
+# 1. 您的 AdSense 發布商 ID
 ADSENSE_PUB_ID = 'ca-pub-4585150092118682'
 
-# 2. AdSense 自動廣告代碼（推薦用於審核階段）
-ADSENSE_AUTO_ADS = f"""
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
-     crossorigin="anonymous"></script>
+# 2. AdSense 完整載入代碼（包含隱藏的 iframe，確保腳本完整執行）
+ADSENSE_AUTO_ADS_FULL = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+         crossorigin="anonymous"></script>
+</head>
+<body>
+    <!-- AdSense 自動廣告載入區 -->
+    <div style="min-height: 1px;"></div>
+</body>
+</html>
 """
 
-# 3. 顯示式廣告單元（需要先在 AdSense 後台創建廣告單元獲取 data-ad-slot）
-# 注意：審核期間建議使用自動廣告，通過後再添加顯示式廣告
+# 3. 顯示式廣告單元（審核通過後使用）
 def get_display_ad_code(ad_slot_id):
-    """生成顯示式廣告代碼"""
+    """生成顯示式廣告代碼（審核通過後替換佔位符使用）"""
     return f"""
-    <ins class="adsbygoogle"
-         style="display:block"
-         data-ad-client="{ADSENSE_PUB_ID}"
-         data-ad-slot="{ad_slot_id}"
-         data-ad-format="auto"
-         data-full-width-responsive="true"></ins>
-    <script>
-         (adsbygoogle = window.adsbygoogle || []).push({{}});
-    </script>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+             crossorigin="anonymous"></script>
+    </head>
+    <body>
+        <ins class="adsbygoogle"
+             style="display:block"
+             data-ad-client="{ADSENSE_PUB_ID}"
+             data-ad-slot="{ad_slot_id}"
+             data-ad-format="auto"
+             data-full-width-responsive="true"></ins>
+        <script>
+             (adsbygoogle = window.adsbygoogle || []).push({{}});
+        </script>
+    </body>
+    </html>
     """
 
-# 4. 佔位廣告區塊（審核期間使用，避免顯示錯誤）
-PLACEHOLDER_AD = """
-<div style='background-color: #f8f9fa; padding: 40px 20px; border-radius: 8px; text-align: center; 
-            border: 1px solid #dee2e6; min-height: 250px; display: flex; align-items: center; justify-content: center;'>
-    <div>
-        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="margin-bottom: 15px; opacity: 0.3;">
-            <rect x="3" y="3" width="18" height="18" rx="2" stroke="#6c757d" stroke-width="2"/>
-            <path d="M3 9h18M9 3v18" stroke="#6c757d" stroke-width="2"/>
-        </svg>
-        <p style='color: #6c757d; font-size: 14px; margin: 0;'>廣告位置</p>
-        <p style='color: #adb5bd; font-size: 12px; margin: 5px 0 0 0;'>AdSense 審核通過後將顯示廣告</p>
+# 4. 佔位廣告區塊（審核期間使用）
+PLACEHOLDER_AD_HTML = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- ⭐ 關鍵：AdSense 腳本必須在這裡才能被 Google 爬蟲檢測到 -->
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+         crossorigin="anonymous"></script>
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }}
+        .ad-placeholder {{
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 40px 20px;
+            border-radius: 8px;
+            text-align: center;
+            border: 2px dashed #dee2e6;
+            min-height: 250px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .ad-content {{
+            max-width: 400px;
+        }}
+        .ad-icon {{
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 15px;
+            opacity: 0.3;
+        }}
+        .ad-title {{
+            color: #6c757d;
+            font-size: 16px;
+            font-weight: 600;
+            margin: 10px 0 5px 0;
+        }}
+        .ad-subtitle {{
+            color: #adb5bd;
+            font-size: 13px;
+            margin: 0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="ad-placeholder">
+        <div class="ad-content">
+            <svg class="ad-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="3" width="18" height="18" rx="2" stroke="#6c757d" stroke-width="2"/>
+                <path d="M3 9h18M9 3v18" stroke="#6c757d" stroke-width="2"/>
+            </svg>
+            <p class="ad-title">廣告位置</p>
+            <p class="ad-subtitle">Google AdSense 審核通過後將顯示廣告</p>
+            <p class="ad-subtitle" style="margin-top: 10px; font-size: 11px;">
+                Publisher ID: {ADSENSE_PUB_ID}
+            </p>
+        </div>
     </div>
-</div>
+</body>
+</html>
 """
 
 def inject_adsense_head():
-    """注入 AdSense 代碼到頁面（僅一次）"""
-    # 使用 st.components.html 注入自動廣告腳本
-    components.html(ADSENSE_AUTO_ADS, height=0, width=0)
+    """注入 AdSense 代碼到頁面（確保 Google 可檢測）"""
+    # 使用較大的 height 確保內容完整載入
+    components.html(ADSENSE_AUTO_ADS_FULL, height=50, scrolling=False)
 
 def show_ad_placeholder():
-    """顯示廣告佔位符"""
-    st.markdown(PLACEHOLDER_AD, unsafe_allow_html=True)
+    """顯示包含 AdSense 腳本的廣告佔位符"""
+    components.html(PLACEHOLDER_AD_HTML, height=280, scrolling=False)
 
 # ----------------------------------------------------------------------
 
