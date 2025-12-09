@@ -54,37 +54,51 @@ openai_client = get_openai_client(OPENAI_KEY)
 
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
-# ⭐ Google Analytics Gtag 程式碼 (用於間接 AdSense 驗證) ⭐
-GA_ID = 'G-YWE11P87TO' # 從您的截圖 (48) 取得的衡量 ID
 
+# ⭐⭐⭐ GA / AdSense 最終整合代碼區塊 (已修正貼入錯誤) ⭐⭐⭐
+
+# 1. Google Analytics 衡量 ID (G-YWE11P87TO)
+GA_ID = 'G-YWE11P87TO' 
+ADSENSE_PUB_ID = 'ca-pub-4585150092118682'
+ADSENSE_SLOT_ID = 'YOUR_AD_SLOT_ID_HERE'
+
+
+# 2. GA Gtag 追蹤程式碼 (用於 AdSense 間接驗證)
 GA_TRACKING_CODE = f"""
-<script async src="https://www.googletagmanager.com/gtag/js?id={G-YWE11P87T0}"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){{dataLayer.push(arguments);}}
   gtag('js', new Date());
 
-  gtag('config', '{G-YWE11P87T0}');
+  gtag('config', '{GA_ID}');
 </script>
 """
 
-# --- 廣告單元碼 (用於顯示廣告) ---
-# 注意：請替換 data-ad-client 和 data-ad-slot
-ADSENSE_CODE = """
+# 3. AdSense 驗證/主載入腳本 (合併 GA 的主載入腳本)
+ADSENSE_VERIFICATION_SCRIPT = f"""
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}" crossorigin="anonymous"></script>
+{GA_TRACKING_CODE}
+"""
+
+
+# 4. 廣告單元碼 (用於顯示廣告)
+ADSENSE_CODE = f"""
 <div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
     <ins class="adsbygoogle"
          style="display:block"
-         data-ad-client="ca-pub-4585150092118682"
-         data-ad-slot="YOUR_AD_SLOT_ID_HERE" 
+         data-ad-client="{ADSENSE_PUB_ID}"
+         data-ad-slot="{ADSENSE_SLOT_ID}" 
          data-ad-format="auto"
          data-full-width-responsive="true"></ins>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4585150092118682" crossorigin="anonymous"></script>
     <script>
-         (adsbygoogle = window.adsbygoogle || []).push({});
+         (adsbygoogle = window.adsbygoogle || []).push({{}});
     </script>
     <h3>【廣告模擬區，請替換上方程式碼】</h3> 
 </div>
 """
+# ----------------------------------------------------------------------
+
 
 def show_ad_component():
     """在 Streamlit 中嵌入廣告程式碼"""
@@ -393,8 +407,7 @@ def main():
         st.session_state.analysis_unlocked = False
         st.session_state.show_analysis_results = False 
 
-    # ⭐ 步驟 1: 嵌入 GA/AdSense 驗證碼 (使用 components.html 強化載入) ⭐
-    # 由於 Streamlit 不支援 <head>，使用此方法將腳本置於網頁最頂部。
+    # ⭐ 步驟 1: 嵌入 AdSense/GA 驗證碼 (使用 components.html 強化載入) ⭐
     components.html(ADSENSE_VERIFICATION_SCRIPT, height=0, width=0)
     # ----------------------------------------------------------------
 
@@ -537,4 +550,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
