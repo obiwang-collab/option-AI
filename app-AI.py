@@ -65,7 +65,7 @@ ADSENSE_AUTO_ADS_FULL = f"""
 <!DOCTYPE html>
 <html>
 <head>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_4585150092118682}"
          crossorigin="anonymous"></script>
 </head>
 <body>
@@ -88,7 +88,7 @@ def get_display_ad_code(ad_slot_id):
     <body>
         <ins class="adsbygoogle"
              style="display:block"
-             data-ad-client="{ADSENSE_PUB_ID}"
+             data-ad-client="{ADSENSE_PUB_4585150092118682}"
              data-ad-slot="{ad_slot_id}"
              data-ad-format="auto"
              data-full-width-responsive="true"></ins>
@@ -105,7 +105,7 @@ PLACEHOLDER_AD_HTML = f"""
 <html>
 <head>
     <!-- ⭐ 關鍵：AdSense 腳本必須在這裡才能被 Google 爬蟲檢測到 -->
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_4585150092118682}"
          crossorigin="anonymous"></script>
     <style>
         body {{
@@ -156,7 +156,7 @@ PLACEHOLDER_AD_HTML = f"""
             <p class="ad-title">廣告位置</p>
             <p class="ad-subtitle">Google AdSense 審核通過後將顯示廣告</p>
             <p class="ad-subtitle" style="margin-top: 10px; font-size: 11px;">
-                Publisher ID: {ADSENSE_PUB_ID}
+                Publisher ID: {ADSENSE_PUB_4585150092118682}
             </p>
         </div>
     </div>
@@ -168,7 +168,7 @@ def inject_adsense_head():
     """注入 AdSense 代碼到頁面（確保 Google 可檢測）"""
     # ⭐ 方法1: 使用 st.markdown 直接注入（讓 Google 爬蟲可見）
     st.markdown(f"""
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_4585150092118682}"
          crossorigin="anonymous"></script>
     """, unsafe_allow_html=True)
     
@@ -179,7 +179,7 @@ def show_ad_placeholder():
     """顯示包含 AdSense 腳本的廣告佔位符"""
     # ⭐ 先用 st.markdown 注入腳本（讓 Google 看到）
     st.markdown(f"""
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_4585150092118682}"
          crossorigin="anonymous"></script>
     """, unsafe_allow_html=True)
     
@@ -574,4 +574,5 @@ def main():
         
         if start_countdown:
             placeholder =
+
 
