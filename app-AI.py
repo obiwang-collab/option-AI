@@ -54,8 +54,19 @@ openai_client = get_openai_client(OPENAI_KEY)
 
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
+# ⭐ Google Analytics Gtag 程式碼 (用於間接 AdSense 驗證) ⭐
+GA_ID = 'G-YWE11P87TO' # 從您的截圖 (48) 取得的衡量 ID
 
-# ⭐ FINAL FIX: AdSense 驗證碼與廣告單元碼分離 and 格式修正 ⭐
+GA_TRACKING_CODE = f"""
+<script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){{dataLayer.push(arguments);}}
+  gtag('js', new Date());
+
+  gtag('config', '{GA_ID}');
+</script>
+"""
 
 # --- 廣告單元碼 (用於顯示廣告) ---
 # 注意：請替換 data-ad-client 和 data-ad-slot
@@ -67,19 +78,13 @@ ADSENSE_CODE = """
          data-ad-slot="YOUR_AD_SLOT_ID_HERE" 
          data-ad-format="auto"
          data-full-width-responsive="true"></ins>
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4585150092118682" crossorigin="anonymous"></script>
     <script>
          (adsbygoogle = window.adsbygoogle || []).push({});
     </script>
     <h3>【廣告模擬區，請替換上方程式碼】</h3> 
 </div>
 """
-
-# --- AdSense 驗證/主載入腳本 (用於網站驗證，必須使用您的發布商 ID) ---
-ADSENSE_VERIFICATION_SCRIPT = """
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4585150092118682" crossorigin="anonymous"></script>
-"""
-# ----------------------------------------------------------------------
-
 
 def show_ad_component():
     """在 Streamlit 中嵌入廣告程式碼"""
@@ -388,8 +393,8 @@ def main():
         st.session_state.analysis_unlocked = False
         st.session_state.show_analysis_results = False 
 
-    # ⭐ 步驟 1: 嵌入 AdSense 驗證碼 (使用 components.html 強化載入) ⭐
-    # 驗證碼必須放在 Streamlit App 的最頂部
+    # ⭐ 步驟 1: 嵌入 GA/AdSense 驗證碼 (使用 components.html 強化載入) ⭐
+    # 由於 Streamlit 不支援 <head>，使用此方法將腳本置於網頁最頂部。
     components.html(ADSENSE_VERIFICATION_SCRIPT, height=0, width=0)
     # ----------------------------------------------------------------
 
