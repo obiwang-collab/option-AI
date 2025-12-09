@@ -54,9 +54,10 @@ openai_client = get_openai_client(OPENAI_KEY)
 
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
-# ⭐ FINAL FIX: AdSense 驗證碼與廣告單元碼分離 ⭐
 
-# --- 廣告單元碼 (用於顯示廣告，已修復格式問題) ---
+# ⭐ FINAL FIX: AdSense 驗證碼與廣告單元碼分離 and 格式修正 ⭐
+
+# --- 廣告單元碼 (用於顯示廣告) ---
 # 注意：請替換 data-ad-client 和 data-ad-slot
 ADSENSE_CODE = """
 <div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
@@ -73,11 +74,10 @@ ADSENSE_CODE = """
 </div>
 """
 
-# --- AdSense 驗證/主載入腳本 (用於網站驗證，必須在 App 頂部載入) ---
-ADSENSE_VERIFICATION_CODE = """
+# --- AdSense 驗證/主載入腳本 (用於網站驗證，必須使用您的發布商 ID) ---
+ADSENSE_VERIFICATION_SCRIPT = """
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4585150092118682" crossorigin="anonymous"></script>
 """
-# 請注意：ca-pub-4585150092118682 應替換為您 AdSense 帳戶的發布商 ID。
 # ----------------------------------------------------------------------
 
 
@@ -388,9 +388,9 @@ def main():
         st.session_state.analysis_unlocked = False
         st.session_state.show_analysis_results = False 
 
-    # ⭐ 步驟 1: 嵌入 AdSense 驗證碼 (放在 <head> 區塊的模擬) ⭐
+    # ⭐ 步驟 1: 嵌入 AdSense 驗證碼 (使用 components.html 強化載入) ⭐
     # 驗證碼必須放在 Streamlit App 的最頂部
-    st.markdown(ADSENSE_VERIFICATION_CODE, unsafe_allow_html=True)
+    components.html(ADSENSE_VERIFICATION_SCRIPT, height=0, width=0)
     # ----------------------------------------------------------------
 
     st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
