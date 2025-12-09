@@ -58,7 +58,8 @@ MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 ADSENSE_CODE = """
 <div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
     <h3>【廣告顯示區域】</h3>
-    <p>請將您的 Google AdSense 程式碼完整貼在這裡，以獲得收入。</p>
+    <p><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4585150092118682"
+     crossorigin="anonymous"></script></p>
 </div>
 """
 
@@ -519,3 +520,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
