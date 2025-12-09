@@ -361,11 +361,12 @@ def ask_chatgpt(prompt_text):
         return f"ChatGPT 錯誤: {str(e)}"
 
 # --- 主程式 ---
-def main():
-    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
+def main():    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
     
     col_title, col_btn = st.columns([3, 1])
-    if st.sidebar.button("🔄 重新整理"): st.cache_data.clear(); st.rerun()
+    if st.sidebar.button("🔄 重新整理"): 
+        st.cache_data.clear()
+        st.rerun()
 
     st.sidebar.markdown("---")
     st.sidebar.caption(f"🔵 Gemini: {'✅' if gemini_model else '❌'}")
@@ -382,7 +383,7 @@ def main():
 
     # --- 計算 DoD 差異 ---
     df_full = calculate_dod_change(df_today, df_yesterday)
-    df = df_full # 將包含 DoD 差異的 DataFrame 設為主要數據源
+    df = df_full
     data_date = date_today
     
     # 數據指標與圖表
@@ -395,11 +396,54 @@ def main():
     
     # --- 莊家分析區 ---
     st.markdown("### 🎲 莊家控盤劇本 (雙 AI 預測)")
-    if st.button("🧛‍♂️ 啟動莊家思維分析", type="primary"):
+
+    # ================================================================
+    # 🔥 冷卻按鈕 + 灰色變化 + 動畫版版本
+    # ================================================================
+
+    cooldown_seconds = 60
+    btn_holder = st.empty()
+
+    # 初始化
+    if "last_press" not in st.session_state:
+        st.session_state.last_press = 0
+    if "cooling" not in st.session_state:
+        st.session_state.cooling = False
+
+    def render_button():
+        now = time.time()
+        elapsed = now - st.session_state.last_press
+
+        # 冷卻中 → 灰色 + 動畫
+        if elapsed < cooldown_seconds:
+            remain = int(cooldown_seconds - elapsed)
+            dots = "." * (remain % 4)
+            btn_holder.button(
+                f"⏳ 冷卻中{dots}（剩餘 {remain} 秒）",
+                disabled=True
+            )
+            st.session_state.cooling = True
+            time.sleep(1)
+            st.rerun()
+
+        # 冷卻結束 → 正常按鈕
+        else:
+            st.session_state.cooling = False
+            return btn_holder.button("🧛‍♂️ 啟動莊家思維分析", type="primary")
+
+    button_clicked = render_button()
+
+    # ================================================================
+    # 🧠 按下按鈕後：寫入冷卻時間 + 執行 AI 分析
+    # ================================================================
+    if button_clicked and not st.session_state.cooling:
+
+        st.session_state.last_press = time.time()
+
         if not gemini_model and not openai_client:
             st.error("請至少設定一個 API Key")
         else:
-            data_str = prepare_ai_data(df) # 傳入包含 DoD 差異的數據
+            data_str = prepare_ai_data(df)
             contract_info = get_next_contracts(df, data_date)[0]['info'] if get_next_contracts(df, data_date) else None
             prompt_text = build_ai_prompt(data_str, taiex_now, contract_info)
 
@@ -409,12 +453,16 @@ def main():
 
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     futures = {}
-                    if gemini_model: futures['gemini'] = executor.submit(ask_gemini, prompt_text)
-                    if openai_client: futures['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
+                    if gemini_model: 
+                        futures['gemini'] = executor.submit(ask_gemini, prompt_text)
+                    if openai_client: 
+                        futures['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
 
                     for key, future in futures.items():
-                        if key == 'gemini': gemini_result = future.result()
-                        elif key == 'chatgpt': chatgpt_result = future.result()
+                        if key == 'gemini': 
+                            gemini_result = future.result()
+                        elif key == 'chatgpt': 
+                            chatgpt_result = future.result()
 
             col1, col2 = st.columns(2)
             
@@ -440,7 +488,9 @@ def main():
                 else:
                     st.warning("未設定 Key")
 
-
+    # ================================================================
+    # 其他圖表（原程式未動）
+    # ================================================================
     c1, c2, c3, c4 = st.columns([1.2, 0.8, 1, 1])
     c1.markdown(f"<div style='text-align: left;'><span style='font-size: 14px; color: #555;'>製圖時間</span><br><span style='font-size: 18px; font-weight: bold;'>{datetime.now(tz=TW_TZ).strftime('%Y/%m/%d %H:%M:%S')}</span></div>", unsafe_allow_html=True)
     c2.metric("大盤現貨", f"{int(taiex_now) if taiex_now else 'N/A'}")
@@ -461,6 +511,3 @@ def main():
             sub_ratio = (sub_put / sub_call * 100) if sub_call > 0 else 0
             title_text = (f"<b> {m_code}</b><br><span style='font-size: 14px;'>結算: {s_date}</span><br><span style='font-size: 14px;'>P/C金額比: {sub_ratio:.1f}% ({'偏多' if sub_ratio > 100 else '偏空'})</span>")
             st.plotly_chart(plot_tornado_chart(df_target, title_text, taiex_now), use_container_width=True)
-
-if __name__ == "__main__":
-    main()
