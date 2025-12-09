@@ -55,14 +55,20 @@ openai_client = get_openai_client(OPENAI_KEY)
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
 
-# ⭐⭐⭐ AdSense / GA 最終整合代碼區塊 (僅保留廣告相關 ID 和模擬程式碼) ⭐⭐⭐
+# ⭐⭐⭐ AdSense / GA 最終整合代碼區塊 (Meta Tag 和廣告腳本設定) ⭐⭐⭐
 
-# 1. 您的 AdSense 發布商 ID (用於廣告模擬)
-ADSENSE_PUB_ID = 'ca-pub-4585150092118682'
+# 1. 您的 AdSense 發布商 ID
+# **🚨 請確保此處的 ID 與您 AdSense 介面中的 ID 完全相同！**
+ADSENSE_PUB_ID = 'ca-pub-4585150092118682' 
 ADSENSE_SLOT_ID = 'YOUR_AD_SLOT_ID_HERE'
-GA_ID = 'G-YWE11P87TO'  # 保持 GA ID
+GA_ID = 'G-YWE11P87TO'  
 
-# 2. 廣告單元碼 (用於顯示廣告模擬區塊)
+# 2. AdSense Meta Tag 驗證碼 (用於網域所有權驗證)
+META_TAG_CODE = f"""
+<meta name="google-adsense-account" content="{ADSENSE_PUB_ID}">
+"""
+
+# 3. 廣告單元碼 (用於顯示廣告模擬區塊)
 ADSENSE_CODE = f"""
 <div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
     <ins class="adsbygoogle"
@@ -387,12 +393,15 @@ def main():
         st.session_state.analysis_unlocked = False
         st.session_state.show_analysis_results = False 
 
-    # ⭐⭐ 關鍵修正: 從 Secrets 載入 AdSense 腳本並注入到頁面頂部 ⭐⭐
+    # ⭐⭐ 關鍵新增: AdSense Meta Tag 驗證 ⭐⭐
+    # 使用 st.markdown 將 Meta Tag 注入到網頁頂部
+    st.markdown(META_TAG_CODE, unsafe_allow_html=True)
+
+    # ⭐⭐ 腳本注入: 從 Secrets 載入 AdSense 腳本 (保持原樣，用於未來廣告顯示) ⭐⭐
     adsense_script_from_secrets = st.secrets.get("google_adsense_code", None)
     
     # 僅當腳本存在時，才將其注入到頁面頂部
     if adsense_script_from_secrets:
-        # components.html 確保程式碼在 Streamlit 應用程式載入時執行
         components.html(adsense_script_from_secrets, height=0, width=0)
     
     # ----------------------------------------------------------------
