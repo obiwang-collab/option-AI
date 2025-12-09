@@ -82,7 +82,7 @@ def get_display_ad_code(ad_slot_id):
     <!DOCTYPE html>
     <html>
     <head>
-        <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+        <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_4585150092118682}"
              crossorigin="anonymous"></script>
     </head>
     <body>
@@ -574,3 +574,4 @@ def main():
         
         if start_countdown:
             placeholder =
+
