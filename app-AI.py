@@ -54,14 +54,32 @@ openai_client = get_openai_client(OPENAI_KEY)
 
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
-# --- 廣告程式碼 (請務必替換為您從 AdSense 取得的程式碼) ---
+# ⭐ FINAL FIX: AdSense 驗證碼與廣告單元碼分離 ⭐
+
+# --- 廣告單元碼 (用於顯示廣告，已修復格式問題) ---
+# 注意：請替換 data-ad-client 和 data-ad-slot
 ADSENSE_CODE = """
 <div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
-    <h3>【廣告顯示區域】</h3>
-    <p><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4585150092118682"
-     crossorigin="anonymous"></script></p>
+    <ins class="adsbygoogle"
+         style="display:block"
+         data-ad-client="ca-pub-4585150092118682"
+         data-ad-slot="YOUR_AD_SLOT_ID_HERE" 
+         data-ad-format="auto"
+         data-full-width-responsive="true"></ins>
+    <script>
+         (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
+    <h3>【廣告模擬區，請替換上方程式碼】</h3> 
 </div>
 """
+
+# --- AdSense 驗證/主載入腳本 (用於網站驗證，必須在 App 頂部載入) ---
+ADSENSE_VERIFICATION_CODE = """
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4585150092118682" crossorigin="anonymous"></script>
+"""
+# 請注意：ca-pub-4585150092118682 應替換為您 AdSense 帳戶的發布商 ID。
+# ----------------------------------------------------------------------
+
 
 def show_ad_component():
     """在 Streamlit 中嵌入廣告程式碼"""
@@ -363,12 +381,6 @@ def ask_chatgpt(prompt_text):
         if "insufficient_quota" in str(e): return "⚠️ OpenAI 額度不足"
         return f"ChatGPT 錯誤: {str(e)}"
 
-# --- AdSense 驗證碼 ---
-ADSENSE_VERIFICATION_CODE = """
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXXXXXXXX" crossorigin="anonymous"></script>
-"""
-# 請注意：請將 ca-pub-XXXXXXXXXXXXXXXX 替換為您的 AdSense 發布商 ID。
-
 # --- 主程式 ---
 def main():
     # 確保 Session State 狀態初始化
@@ -377,7 +389,7 @@ def main():
         st.session_state.show_analysis_results = False 
 
     # ⭐ 步驟 1: 嵌入 AdSense 驗證碼 (放在 <head> 區塊的模擬) ⭐
-    # 用於網站審核，確保 Google 能夠驗證您的網站擁有權。
+    # 驗證碼必須放在 Streamlit App 的最頂部
     st.markdown(ADSENSE_VERIFICATION_CODE, unsafe_allow_html=True)
     # ----------------------------------------------------------------
 
@@ -419,7 +431,7 @@ def main():
     c2.metric("大盤現貨", f"{int(taiex_now) if taiex_now else 'N/A'}")
     trend = "偏多" if pc_ratio_amt > 100 else "偏空"
     c3.metric("全市場 P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}格局", delta_color="normal" if pc_ratio_amt > 100 else "inverse")
-    c4.metric("資料來源日期", f"{data_date} (與 {df_yesterday['date'].iloc[0] if 'date' in df_yesterday.columns else '前一日'} 比較)")
+    c4.metric("資料來源日期", f"{data_date} (與 {date_yesterday} 比較)")
 
     st.markdown("---")
     
@@ -520,4 +532,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
