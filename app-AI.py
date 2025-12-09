@@ -166,12 +166,41 @@ PLACEHOLDER_AD_HTML = f"""
 
 def inject_adsense_head():
     """注入 AdSense 代碼到頁面（確保 Google 可檢測）"""
-    # 使用較大的 height 確保內容完整載入
-    components.html(ADSENSE_AUTO_ADS_FULL, height=50, scrolling=False)
+    # ⭐ 方法1: 使用 st.markdown 直接注入（讓 Google 爬蟲可見）
+    st.markdown(f"""
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+         crossorigin="anonymous"></script>
+    """, unsafe_allow_html=True)
+    
+    # ⭐ 方法2: 同時使用 components.html 確保腳本執行
+    components.html(ADSENSE_AUTO_ADS_FULL, height=1, scrolling=False)
 
 def show_ad_placeholder():
     """顯示包含 AdSense 腳本的廣告佔位符"""
-    components.html(PLACEHOLDER_AD_HTML, height=280, scrolling=False)
+    # ⭐ 先用 st.markdown 注入腳本（讓 Google 看到）
+    st.markdown(f"""
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}"
+         crossorigin="anonymous"></script>
+    """, unsafe_allow_html=True)
+    
+    # 然後顯示廣告佔位符
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+                padding: 40px 20px; border-radius: 8px; text-align: center;
+                border: 2px dashed #dee2e6; min-height: 250px;
+                display: flex; align-items: center; justify-content: center;'>
+        <div style='max-width: 400px;'>
+            <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" 
+                 style="margin: 0 auto 15px; opacity: 0.3; display: block;">
+                <rect x="3" y="3" width="18" height="18" rx="2" stroke="#6c757d" stroke-width="2"/>
+                <path d="M3 9h18M9 3v18" stroke="#6c757d" stroke-width="2"/>
+            </svg>
+            <p style='color: #6c757d; font-size: 16px; font-weight: 600; margin: 10px 0 5px 0;'>廣告位置</p>
+            <p style='color: #adb5bd; font-size: 13px; margin: 0;'>Google AdSense 審核通過後將顯示廣告</p>
+            <p style='color: #adb5bd; font-size: 11px; margin-top: 10px;'>Publisher ID: """ + ADSENSE_PUB_ID + """</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
 
