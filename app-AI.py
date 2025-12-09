@@ -10,7 +10,7 @@ import re
 import google.generativeai as genai
 from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor
-import streamlit.components.v1 as components 
+import streamlit.components.v1 as components  
 
 # --- 頁面設定 ---
 st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (莊家控盤版)")
@@ -55,34 +55,24 @@ openai_client = get_openai_client(OPENAI_KEY)
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
 
-# ⭐⭐⭐ AdSense / GA 最終整合代碼區塊 (Meta 標記驗證) ⭐⭐⭐
+# ⭐⭐⭐ AdSense / GA 最終整合代碼區塊 (僅保留廣告相關 ID 和模擬程式碼) ⭐⭐⭐
 
-# 1. 您的 AdSense 發布商 ID
+# 1. 您的 AdSense 發布商 ID (用於廣告模擬)
 ADSENSE_PUB_ID = 'ca-pub-4585150092118682'
 ADSENSE_SLOT_ID = 'YOUR_AD_SLOT_ID_HERE'
-GA_ID = 'G-YWE11P87TO' 
+GA_ID = 'G-YWE11P87TO'  # 保持 GA ID
 
-# 2. AdSense 驗證/主載入腳本 (用於載入廣告服務)
-ADSENSE_VERIFICATION_SCRIPT = f"""
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_PUB_ID}" crossorigin="anonymous"></script>
-"""
-
-# 3. AdSense Meta 驗證標記 (用於網站擁有權驗證)
-META_TAG_CODE = f"""
-<meta name="google-adsense-account" content="{ADSENSE_PUB_ID}">
-"""
-
-# 4. 廣告單元碼 (用於顯示廣告)
+# 2. 廣告單元碼 (用於顯示廣告模擬區塊)
 ADSENSE_CODE = f"""
 <div style='background-color: #f0f2f6; padding: 20px; border-radius: 10px; text-align: center; border: 2px dashed #ccc;'>
     <ins class="adsbygoogle"
-         style="display:block"
-         data-ad-client="{ADSENSE_PUB_ID}"
-         data-ad-slot="{ADSENSE_SLOT_ID}" 
-         data-ad-format="auto"
-         data-full-width-responsive="true"></ins>
+          style="display:block"
+          data-ad-client="{ADSENSE_PUB_ID}"
+          data-ad-slot="{ADSENSE_SLOT_ID}" 
+          data-ad-format="auto"
+          data-full-width-responsive="true"></ins>
     <script>
-         (adsbygoogle = window.adsbygoogle || []).push({{}});
+        (adsbygoogle = window.adsbygoogle || []).push({{}});
     </script>
     <h3>【廣告模擬區，請替換上方程式碼】</h3> 
 </div>
@@ -97,7 +87,7 @@ def show_ad_component():
         height=200, 
     )
 
-# --- 核心函式 ---
+# --- 核心函式 (略) ---
 def get_settlement_date(contract_code):
     code = str(contract_code).strip().upper()
     for key, fix_date in MANUAL_SETTLEMENT_FIX.items():
@@ -162,8 +152,8 @@ def get_option_data():
         payload = {'queryType': '2', 'marketCode': '0', 'dateaddcnt': '', 'commodity_id': 'TXO', 'commodity_id2': '', 'queryDate': query_date, 'MarketCode': '0', 'commodity_idt': 'TXO'}
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5)
-            res.encoding = 'utf-8' 
-            if "查無資料" in res.text or len(res.text) < 500: continue 
+            res.encoding = 'utf-8'  
+            if "查無資料" in res.text or len(res.text) < 500: continue  
             dfs = pd.read_html(StringIO(res.text))
             df = dfs[0]
             
@@ -186,15 +176,15 @@ def get_option_data():
             df['Price'] = pd.to_numeric(df['Price'].astype(str).str.replace(',', '').replace('-', '0'), errors='coerce').fillna(0)
             df['Amount'] = df['OI'] * df['Price'] * 50
             
-            if df['OI'].sum() == 0: continue 
+            if df['OI'].sum() == 0: continue  
 
             all_data.append({'date': query_date, 'df': df})
             
             if len(all_data) >= 2: break
-        except: continue 
+        except: continue  
     
-    if len(all_data) < 2: 
-        return None, None, None, None 
+    if len(all_data) < 2:  
+        return None, None, None, None  
 
     df_today = all_data[0]['df']
     date_today = all_data[0]['date']
@@ -218,7 +208,7 @@ def calculate_dod_change(df_today, df_yesterday):
     
     return df_merged
 
-# --- 修正圖表函式：顯示差異口數 ---
+# --- 修正圖表函式：顯示差異口數 (略) ---
 def plot_tornado_chart(df_target, title_text, spot_price):
     is_call = df_target['Type'].str.contains('買|Call', case=False, na=False)
     
@@ -231,7 +221,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     total_call_money = data['Call_Amt'].sum()
     
     data = data[(data['Call_OI'] > 300) | (data['Put_OI'] > 300)]
-    FOCUS_RANGE = 1200 
+    FOCUS_RANGE = 1200  
     center_price = spot_price if (spot_price and spot_price > 0) else (data.loc[data['Put_OI'].idxmax(), 'Strike'] if not data.empty else 0)
     
     if center_price > 0:
@@ -248,30 +238,30 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig = go.Figure()
     
     fig.add_trace(go.Bar(
-        y=data['Strike'], 
-        x=-data['Put_OI'], 
-        orientation='h', 
-        name='Put (支撐)', 
-        marker_color='#2ca02c', 
-        opacity=0.85, 
-        customdata=data['Put_Amt'] / 100000000, 
+        y=data['Strike'],  
+        x=-data['Put_OI'],  
+        orientation='h',  
+        name='Put (支撐)',  
+        marker_color='#2ca02c',  
+        opacity=0.85,  
+        customdata=data['Put_Amt'] / 100000000,  
         hovertemplate='<b>履約價: %{y}</b><br>Put OI: %{x} 口<br>Put 變化: %{text} 口<br>Put 市值: %{customdata:.2f}億<extra></extra>',
         text=data['Put_Text'],       
-        textposition='outside',      
-        cliponaxis=False             
+        textposition='outside',        
+        cliponaxis=False          
     ))
     
     fig.add_trace(go.Bar(
-        y=data['Strike'], 
-        x=data['Call_OI'], 
-        orientation='h', 
-        name='Call (壓力)', 
-        marker_color='#d62728', 
-        opacity=0.85, 
-        customdata=data['Call_Amt'] / 100000000, 
+        y=data['Strike'],  
+        x=data['Call_OI'],  
+        orientation='h',  
+        name='Call (壓力)',  
+        marker_color='#d62728',  
+        opacity=0.85,  
+        customdata=data['Call_Amt'] / 100000000,  
         hovertemplate='<b>履約價: %{y}</b><br>Call OI: %{x} 口<br>Call 變化: %{text} 口<br>Call 市值: %{customdata:.2f}億<extra></extra>',
         text=data['Call_Text'],      
-        textposition='outside',      
+        textposition='outside',        
         cliponaxis=False
     ))
 
@@ -285,20 +275,20 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     annotations.append(dict(x=0.98, y=1.05, xref="paper", yref="paper", text=f"<b>Call 總金額</b><br>{total_call_money/100000000:.1f} 億", showarrow=False, align="right", font=dict(size=14, color="#d62728"), bgcolor="white", bordercolor="#d62728", borderwidth=2, borderpad=6))
 
     fig.update_layout(
-        title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")), 
-        xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.75)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), 
-        yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'), 
-        barmode='overlay', 
-        legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), 
-        height=750, 
-        margin=dict(l=40, r=100, t=140, b=60), 
-        annotations=annotations, 
-        paper_bgcolor='white', 
+        title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")),  
+        xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.75)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]),  
+        yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'),  
+        barmode='overlay',  
+        legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"),  
+        height=750,  
+        margin=dict(l=40, r=100, t=140, b=60),  
+        annotations=annotations,  
+        paper_bgcolor='white',  
         plot_bgcolor='white'
     )
     return fig
 
-# --- 資料準備函式 ---
+# --- 資料準備函式 (略) ---
 def prepare_ai_data(df):
     """只取前 25 大合約，確保 AI 專注於『大戶戰場』"""
     df_ai = df.copy()
@@ -309,7 +299,7 @@ def prepare_ai_data(df):
     df_ai = df_ai[keep_cols]
     return df_ai.to_csv(index=False)
 
-# --- helper ---
+# --- helper (略) ---
 def get_next_contracts(df, data_date):
     unique_codes = df['Month'].unique()
     all_contracts = []
@@ -329,7 +319,7 @@ def get_next_contracts(df, data_date):
             else: plot_targets[0]['title'] = '最近結算 (同月選)'
     return plot_targets
 
-# --- 莊家控盤思維 Prompt ---
+# --- 莊家控盤思維 Prompt (略) ---
 def build_ai_prompt(data_str, taiex_price, contract_info):
     contract_note = f"結算合約：{contract_info.get('code')}" if contract_info else ""
 
@@ -355,7 +345,7 @@ def build_ai_prompt(data_str, taiex_price, contract_info):
     """
     return prompt.strip()
 
-# --- AI 分析 (Gemini) ---
+# --- AI 分析 (Gemini) (略) ---
 def ask_gemini(prompt_text):
     if not gemini_model: return "⚠️ 未設定 Gemini Key"
     
@@ -374,7 +364,7 @@ def ask_gemini(prompt_text):
     except Exception as e:
         return f"Gemini 錯誤: {str(e)}"
 
-# --- AI 分析 (ChatGPT) ---
+# --- AI 分析 (ChatGPT) (略) ---
 def ask_chatgpt(prompt_text):
     if not openai_client: return "⚠️ 未設定 OpenAI Key"
     try:
@@ -397,11 +387,14 @@ def main():
         st.session_state.analysis_unlocked = False
         st.session_state.show_analysis_results = False 
 
-    # ⭐ 步驟 1: 嵌入 AdSense 主腳本 (用於載入服務，無衝突)
-    components.html(ADSENSE_VERIFICATION_SCRIPT, height=0, width=0)
+    # ⭐⭐ 關鍵修正: 從 Secrets 載入 AdSense 腳本並注入到頁面頂部 ⭐⭐
+    adsense_script_from_secrets = st.secrets.get("google_adsense_code", None)
     
-    # ⭐ 步驟 2: 嵌入 AdSense Meta 驗證標記 (用於網站擁有權驗證)
-    st.markdown(META_TAG_CODE, unsafe_allow_html=True)
+    # 僅當腳本存在時，才將其注入到頁面頂部
+    if adsense_script_from_secrets:
+        # components.html 確保程式碼在 Streamlit 應用程式載入時執行
+        components.html(adsense_script_from_secrets, height=0, width=0)
+    
     # ----------------------------------------------------------------
 
     st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
@@ -446,7 +439,7 @@ def main():
 
     st.markdown("---")
     
-    # --- ⭐⭐ 方案 A 延遲解鎖邏輯 (SyntaxError 已修正) ⭐⭐ ---
+    # --- ⭐⭐ 方案 A 延遲解鎖邏輯 (保持不變) ⭐⭐ ---
 
     if st.session_state.analysis_unlocked:
         # 解鎖後：顯示 AI 分析區塊
@@ -466,7 +459,6 @@ def main():
         start_countdown = st.button("點此開始倒數計時 (解鎖分析)", key="start_timer", type="secondary")
         
         if start_countdown:
-            # ✅ 這是位於第 576 行的修正處，確保賦值完整
             placeholder = st.empty() 
             wait_time = 8 
             
@@ -478,7 +470,7 @@ def main():
             placeholder.success("✅ AI 分析功能已解鎖！請點擊上方的綠色按鈕執行分析。")
             st.rerun()
 
-    # --- AI 執行與結果顯示邏輯 ---
+    # --- AI 執行與結果顯示邏輯 (略) ---
     if st.session_state.show_analysis_results:
         if not st.session_state.analysis_unlocked:
             st.markdown("### 🎲 莊家控盤劇本 (雙 AI 預測)")
@@ -486,8 +478,8 @@ def main():
         if not gemini_model and not openai_client:
             st.error("請至少設定一個 API Key")
         else:
-            data_str = prepare_ai_data(df) 
-            plot_targets = get_next_contracts(df, data_date) 
+            data_str = prepare_ai_data(df)  
+            plot_targets = get_next_contracts(df, data_date)  
             contract_info = plot_targets[0]['info'] if plot_targets else None
             prompt_text = build_ai_prompt(data_str, taiex_now, contract_info)
 
@@ -528,7 +520,7 @@ def main():
                 else:
                     st.warning("未設定 Key")
     
-    # --- 圖表顯示區 ---
+    # --- 圖表顯示區 (略) ---
     plot_targets = get_next_contracts(df, data_date)
     cols = st.columns(len(plot_targets)) if plot_targets else []
     for i, target in enumerate(plot_targets):
