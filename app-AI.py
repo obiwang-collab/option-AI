@@ -58,13 +58,13 @@ MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 GA_ID = 'G-YWE11P87TO' # 從您的截圖 (48) 取得的衡量 ID
 
 GA_TRACKING_CODE = f"""
-<script async src="https://www.googletagmanager.com/gtag/js?id={GA_ID}"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id={G-YWE11P87T0}"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){{dataLayer.push(arguments);}}
   gtag('js', new Date());
 
-  gtag('config', '{GA_ID}');
+  gtag('config', '{G-YWE11P87T0}');
 </script>
 """
 
@@ -537,3 +537,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
