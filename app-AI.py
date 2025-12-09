@@ -9,11 +9,11 @@ import calendar
 import re
 import google.generativeai as genai
 from openai import OpenAI
-from concurrent.futures import ThreadPoolExecutor 
+from concurrent.futures import ThreadPoolExecutor
 
 # --- 頁面設定 ---
 st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (莊家控盤版)")
-TW_TZ = timezone(timedelta(hours=8)) 
+TW_TZ = timezone(timedelta(hours=8))
 
 # ==========================================
 # 🔑 金鑰設定區
@@ -316,18 +316,30 @@ def main():
                         elif key == 'chatgpt': chatgpt_result = future.result()
 
             col1, col2 = st.columns(2)
+            
+            # --- 修正後的 Gemini 顯示區塊 (避免直接列印物件) ---
             with col1:
                 st.subheader("🔵 Google Gemini")
-                if gemini_model: st.info(gemini_result) if gemini_result else st.warning("無回應")
-                else: st.warning("未設定 Key")
+                if gemini_model:
+                    if gemini_result:
+                        st.info(gemini_result)
+                    else:
+                        st.warning("無回應")
+                else:
+                    st.warning("未設定 Key")
 
+            # --- 修正後的 ChatGPT 顯示區塊 ---
             with col2:
                 st.subheader("🟢 ChatGPT")
                 if openai_client:
-                    if chatgpt_result and "⚠️" in chatgpt_result: st.warning(chatgpt_result)
-                    elif chatgpt_result: st.success(chatgpt_result)
-                    else: st.warning("無回應")
-                else: st.warning("未設定 Key")
+                    if chatgpt_result and "⚠️" in chatgpt_result:
+                        st.warning(chatgpt_result)
+                    elif chatgpt_result:
+                        st.success(chatgpt_result)
+                    else:
+                        st.warning("無回應")
+                else:
+                    st.warning("未設定 Key")
 
     # 數據指標與圖表
     total_call_amt = df[df['Type'].str.contains('買|Call', case=False, na=False)]['Amount'].sum()
