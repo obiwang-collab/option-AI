@@ -19,29 +19,30 @@ TW_TZ = timezone(timedelta(hours=8))
 # 🔑 金鑰設定區
 # ==========================================
 try:
-    # 嘗試從 Streamlit Secrets 讀取
     GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
     OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", "")
 except FileNotFoundError:
-    # 本地端若無 secrets.toml 則為空
     GEMINI_KEY = ""
     OPENAI_KEY = ""
 
-# --- 🧠 1. Gemini 模型設定 ---
+# --- 🧠 1. Gemini 模型設定 (強制使用高額度 Flash 模型) ---
 def get_gemini_model(api_key):
     if not api_key: return None, "未設定"
     genai.configure(api_key=api_key)
     try:
-        # 取得支援 generateContent 的模型
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 優先順序：Flash -> 1.5 Pro -> Pro
-        target_model = None
-        for target in ['flash', 'gemini-1.5-pro', 'gemini-pro']:
-            for m in models:
-                if target in m.lower(): return genai.GenerativeModel(m), m
-        return (genai.GenerativeModel(models[0]), models[0]) if models else (None, "無可用模型")
-    except Exception as e: return None, str(e)
+        # 強制指定目前免費額度最高的模型
+        target_model_name = 'gemini-1.5-flash'
+        return genai.GenerativeModel(target_model_name), target_model_name
+    except Exception as e:
+        # 失敗時的備用邏輯
+        try:
+            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            for target in ['flash', 'gemini-1.5-pro']:
+                for m in models:
+                    if target in m.lower(): return genai.GenerativeModel(m), m
+            return (genai.GenerativeModel(models[0]), models[0]) if models else (None, "無可用模型")
+        except Exception as e2:
+            return None, f"模型設定錯誤: {str(e)}"
 
 # --- 🧠 2. ChatGPT 模型設定 ---
 def get_openai_client(api_key):
@@ -54,7 +55,7 @@ openai_client = get_openai_client(OPENAI_KEY)
 
 MANUAL_SETTLEMENT_FIX = {'202501W1': '2025/01/02'}
 
-# --- 核心函式 ---
+# --- 核心函式 (略) ---
 def get_settlement_date(contract_code):
     code = str(contract_code).strip().upper()
     for key, fix_date in MANUAL_SETTLEMENT_FIX.items():
@@ -88,7 +89,6 @@ def get_realtime_data():
     taiex = None
     ts = int(time.time())
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # 1. 嘗試證交所
     try:
         url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw&json=1&delay=0&_={ts}000"
         res = requests.get(url, timeout=2)
@@ -98,8 +98,6 @@ def get_realtime_data():
             if val == '-': val = data['msgArray'][0].get('o', '-')
             if val != '-': taiex = float(val)
     except: pass
-    
-    # 2. 嘗試 Yahoo
     if taiex is None:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/%5ETWII?interval=1m&range=1d&_={ts}"
@@ -119,7 +117,7 @@ def get_option_data():
         payload = {'queryType': '2', 'marketCode': '0', 'dateaddcnt': '', 'commodity_id': 'TXO', 'commodity_id2': '', 'queryDate': query_date, 'MarketCode': '0', 'commodity_idt': 'TXO'}
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5)
-            res.encoding = 'utf-8' # 強制編碼，防止中文亂碼
+            res.encoding = 'utf-8' 
             if "查無資料" in res.text or len(res.text) < 500: continue 
             dfs = pd.read_html(StringIO(res.text))
             df = dfs[0]
@@ -190,7 +188,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig.update_layout(title=dict(text=title_text, y=0.95, x=0.5, xanchor='center', yanchor='top', font=dict(size=20, color="black")), xaxis=dict(title='未平倉量 (OI)', range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', tickmode='array', tickvals=[-x_limit*0.75, -x_limit*0.5, -x_limit*0.25, 0, x_limit*0.25, x_limit*0.5, x_limit*0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), yaxis=dict(title='履約價', tickmode='linear', dtick=100, tickformat='d'), barmode='overlay', legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), height=750, margin=dict(l=40, r=80, t=140, b=60), annotations=annotations, paper_bgcolor='white', plot_bgcolor='white')
     return fig
 
-# --- 資料準備函式 ---
+# --- 資料準備函式 (略) ---
 def prepare_ai_data(df):
     """只取前 25 大合約，確保 AI 專注於『大戶戰場』"""
     df_ai = df.copy()
@@ -201,7 +199,7 @@ def prepare_ai_data(df):
     df_ai = df_ai[keep_cols]
     return df_ai.to_csv(index=False)
 
-# --- helper ---
+# --- helper (略) ---
 def get_next_contracts(df, data_date):
     unique_codes = df['Month'].unique()
     all_contracts = []
@@ -247,7 +245,7 @@ def build_ai_prompt(data_str, taiex_price, contract_info):
     """
     return prompt.strip()
 
-# --- AI 分析 (Gemini) - 加入 Safety Settings ---
+# --- AI 分析 (Gemini) - 加入 Safety Settings & 錯誤處理 ---
 def ask_gemini(prompt_text):
     if not gemini_model: return "⚠️ 未設定 Gemini Key"
     
@@ -264,7 +262,8 @@ def ask_gemini(prompt_text):
         res = gemini_model.generate_content(prompt_text, safety_settings=safety_settings)
         return res.text
     except ValueError:
-        return "⚠️ Gemini 拒絕回答：Prompt 觸發了安全審查，請稍候重試。"
+        # 捕捉 "Invalid operation... no valid Part" 錯誤
+        return "⚠️ Gemini 拒絕回答：Prompt 觸發了安全審查，請嘗試修飾用詞。"
     except Exception as e:
         return f"Gemini 錯誤: {str(e)}"
 
@@ -322,62 +321,4 @@ def main():
 
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     futures = {}
-                    if gemini_model: futures['gemini'] = executor.submit(ask_gemini, prompt_text)
-                    if openai_client: futures['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
-
-                    for key, future in futures.items():
-                        if key == 'gemini': gemini_result = future.result()
-                        elif key == 'chatgpt': chatgpt_result = future.result()
-
-            col1, col2 = st.columns(2)
-            
-            # --- 顯示結果 (使用修正後的 if-else 邏輯) ---
-            with col1:
-                st.subheader("🔵 Google Gemini")
-                if gemini_model:
-                    if gemini_result:
-                        st.info(gemini_result)
-                    else:
-                        st.warning("無回應 (可能觸發安全限制)")
-                else:
-                    st.warning("未設定 Key")
-
-            with col2:
-                st.subheader("🟢 ChatGPT")
-                if openai_client:
-                    if chatgpt_result and "⚠️" in chatgpt_result:
-                        st.warning(chatgpt_result)
-                    elif chatgpt_result:
-                        st.success(chatgpt_result)
-                    else:
-                        st.warning("無回應")
-                else:
-                    st.warning("未設定 Key")
-
-    # 數據指標與圖表
-    total_call_amt = df[df['Type'].str.contains('買|Call', case=False, na=False)]['Amount'].sum()
-    total_put_amt = df[df['Type'].str.contains('賣|Put', case=False, na=False)]['Amount'].sum()
-    pc_ratio_amt = (total_put_amt / total_call_amt) * 100 if total_call_amt > 0 else 0
-
-    c1, c2, c3, c4 = st.columns([1.2, 0.8, 1, 1])
-    c1.markdown(f"<div style='text-align: left;'><span style='font-size: 14px; color: #555;'>製圖時間</span><br><span style='font-size: 18px; font-weight: bold;'>{datetime.now(tz=TW_TZ).strftime('%Y/%m/%d %H:%M:%S')}</span></div>", unsafe_allow_html=True)
-    c2.metric("大盤現貨", f"{int(taiex_now) if taiex_now else 'N/A'}")
-    trend = "偏多" if pc_ratio_amt > 100 else "偏空"
-    c3.metric("全市場 P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}格局", delta_color="normal" if pc_ratio_amt > 100 else "inverse")
-    c4.metric("資料來源日期", data_date)
-    st.markdown("---")
-
-    cols = st.columns(len(plot_targets)) if plot_targets else []
-    for i, target in enumerate(plot_targets):
-        with cols[i]:
-            m_code = target['info']['code']
-            s_date = target['info']['date']
-            df_target = df[df['Month'] == m_code]
-            sub_call = df_target[df_target['Type'].str.contains('Call|買', case=False, na=False)]['Amount'].sum()
-            sub_put = df_target[df_target['Type'].str.contains('Put|賣', case=False, na=False)]['Amount'].sum()
-            sub_ratio = (sub_put / sub_call * 100) if sub_call > 0 else 0
-            title_text = (f"<b> {m_code}</b><br><span style='font-size: 14px;'>結算: {s_date}</span><br><span style='font-size: 14px;'>P/C金額比: {sub_ratio:.1f}% ({'偏多' if sub_ratio > 100 else '偏空'})</span>")
-            st.plotly_chart(plot_tornado_chart(df_target, title_text, taiex_now), use_container_width=True)
-
-if __name__ == "__main__":
-    main()
+                    if gemini_model: futures['gemini'] = executor.submit(ask_gemini,
