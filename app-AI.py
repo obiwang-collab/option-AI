@@ -326,4 +326,188 @@ def ask_gemini_brief(df, taiex_price):
 2. 今日短線建議（反彈空 / 拉回多 / 區間）
 3. 主力可能控盤方式
 
-不要解釋過
+不要解釋過程，不要講支撐壓力計算方式。
+字數 120 字內。
+
+資料：
+{data_str}
+"""
+
+        res = model.generate_content(prompt)
+        return res.text
+    
+    except Exception as e:
+        return f"Gemini 分析錯誤: {e}"
+
+# ================================================
+# 🤖 ChatGPT 短線分析
+# ================================================
+def ask_chatgpt_brief(df, taiex_price):
+    if "請輸入" in OPENAI_KEY:
+        return "⚠️ 尚未設定 OpenAI API Key"
+
+    try:
+        df_ai = df.copy()
+        df_ai = df_ai.nlargest(40, 'Amount')
+        data_str = df_ai.to_csv(index=False)
+
+        prompt = f"""
+你是一位台指期主力視角操盤手。
+大盤：{taiex_price}
+
+請直述結論：
+1. 多空（偏多/偏空/震盪）
+2. 主力盤中策略（拉高洗、壓盤、誘空等）
+3. 短線建議（拉回多 / 反彈空 / 區間）
+
+字數限制 120 字。
+
+資料：
+{data_str}
+"""
+
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message["content"]
+
+    except Exception as e:
+        return f"ChatGPT 分析錯誤: {e}"
+
+# ================================================
+# ⚔️ AI 兩者比較
+# ================================================
+def compare_ai(gpt_text, gem_text):
+    def detect(text):
+        if "偏多" in text:
+            return "偏多"
+        if "偏空" in text:
+            return "偏空"
+        if "震盪" in text:
+            return "震盪"
+        return "無明確判斷"
+
+    gpt = detect(gpt_text)
+    gem = detect(gem_text)
+
+    if gpt == gem:
+        consensus = f"兩者一致：{gpt}。"
+    else:
+        consensus = f"觀點不同：ChatGPT={gpt}, Gemini={gem} → 高機率震盪。"
+
+    return f"""
+### 🤖 ChatGPT 與 Gemini 短線分析比較
+
+#### ChatGPT：
+{gpt_text}
+
+---
+
+#### Gemini：
+{gem_text}
+
+---
+
+### 📌 多空結論：
+{consensus}
+"""
+
+# ================================================
+# 🏁 主程式
+# ================================================
+def main():
+    st.title("🤖 台指期籌碼戰情室 (AI 決策版)")
+
+    if st.sidebar.button("🔄 重新整理"):
+        st.cache_data.clear()
+        st.rerun()
+
+    with st.spinner("連線期交所中..."):
+        df, data_date = get_option_data()
+        taiex_now = get_realtime_data()
+
+    if df is None:
+        st.error("查無資料")
+        return
+
+    csv = df.to_csv(index=False).encode('utf-8-sig')
+    st.sidebar.download_button("📥 下載完整數據", csv, "option.csv")
+
+    total_call_amt = df[df['Type'].str.contains('買|Call', case=False)]['Amount'].sum()
+    total_put_amt = df[df['Type'].str.contains('賣|Put', case=False)]['Amount'].sum()
+    pc_ratio_amt = total_put_amt * 100 / total_call_amt if total_call_amt > 0 else 0
+
+    st.markdown("### 💡 AI 短線錦囊（Gemini）")
+    if st.button("✨ 取得 Gemini 建議"):
+        with st.spinner("AI 分析中..."):
+            advice = ask_gemini_brief(df, taiex_now)
+        st.info(advice)
+
+    # ====================
+    # ⚔️ 新增 AI 對決分析
+    # ====================
+    st.markdown("### 🤖 ChatGPT vs Gemini 短線分析比較")
+    if st.button("⚔️ AI 雙模型短線對決分析"):
+        with st.spinner("AI 分析中..."):
+            gpt = ask_chatgpt_brief(df, taiex_now)
+            gem = ask_gemini_brief(df, taiex_now)
+            result = compare_ai(gpt, gem)
+        st.markdown(result)
+
+    # ==========================================
+    # 指標區
+    c1, c2, c3, c4 = st.columns([1.2,0.8,1,1])
+    c1.markdown(f"製圖時間<br><b>{datetime.now(tz=TW_TZ).strftime('%Y/%m/%d %H:%M:%S')}</b>", unsafe_allow_html=True)
+    c2.metric("大盤現貨", f"{int(taiex_now) if taiex_now else 'N/A'}")
+    trend = "偏多" if pc_ratio_amt > 100 else "偏空"
+    c3.metric("P/C 金額比", f"{pc_ratio_amt:.1f}%", trend)
+    c4.metric("資料日期", data_date)
+    st.markdown("---")
+
+    # ==========================================
+    # 繪圖
+    unique_codes = df['Month'].unique()
+    all_contracts = []
+
+    for code in unique_codes:
+        s_date = get_settlement_date(code)
+        if s_date == "9999/99/99" or s_date <= data_date:
+            continue
+        all_contracts.append({'code': code, 'date': s_date})
+
+    all_contracts.sort(key=lambda x: x['date'])
+    plot_targets = []
+
+    if all_contracts:
+        nearest = all_contracts[0]
+        plot_targets.append({'title':'最近結算','info':nearest})
+
+        monthly = next((c for c in all_contracts if len(c['code']) == 6), None)
+        if monthly and monthly['code'] != nearest['code']:
+            plot_targets.append({'title':'當月月選','info':monthly})
+
+    cols = st.columns(len(plot_targets))
+
+    for i, target in enumerate(plot_targets):
+        with cols[i]:
+            code = target['info']['code']
+            s_date = target['info']['date']
+            df_target = df[df['Month'] == code]
+
+            sub_call_amt = df_target[df_target['Type'].str.contains('Call|買', case=False)]['Amount'].sum()
+            sub_put_amt = df_target[df_target['Type'].str.contains('Put|賣', case=False)]['Amount'].sum()
+            sub_ratio = sub_put_amt * 100 / sub_call_amt if sub_call_amt > 0 else 0
+
+            title = (
+                f"<b>【{target['title']}】 {code}</b><br>"
+                f"<span style='font-size:14px;'>結算: {s_date}</span><br>"
+                f"<span style='font-size:14px;'>P/C金額比: {sub_ratio:.1f}% "
+                f"({'偏多' if sub_ratio>100 else '偏空'})</span>"
+            )
+
+            fig = plot_tornado_chart(df_target, title, taiex_now)
+            st.plotly_chart(fig, use_container_width=True)
+
+if __name__ == "__main__":
+    main()
