@@ -8,7 +8,6 @@ from io import StringIO
 import calendar
 import re
 import google.generativeai as genai
-# 引入 OpenAI 函式庫
 from openai import OpenAI
 import os 
 
@@ -57,13 +56,10 @@ def configure_openai(api_key):
         return None, "尚未設定 OPENAI Key"
     
     try:
-        # 初始化 OpenAI 客戶端
         client = OpenAI(api_key=api_key)
-        # 簡單呼叫一次 API 檢查 Key 是否有效
         client.models.list() 
         return client, "gpt-3.5-turbo" # 使用 gpt-3.5-turbo 作為預設模型
     except Exception as e:
-        # 如果金鑰無效或連線錯誤，會在這裡被捕獲
         return None, f"連線錯誤: {str(e)}"
 
 # 初始化模型
@@ -76,9 +72,9 @@ MANUAL_SETTLEMENT_FIX = {
     '202501W1': '2025/01/02', 
 }
 
-# --- 核心函式 ---
+# --- 核心函式 (結算日, 數據抓取, 繪圖等邏輯與前版相同，省略內部註解以保持簡潔) ---
+
 def get_settlement_date(contract_code):
-    """計算台指選結算日，主要針對周選和月選"""
     code = str(contract_code).strip().upper()
     for key, fix_date in MANUAL_SETTLEMENT_FIX.items():
         if key in code: return fix_date
@@ -90,17 +86,17 @@ def get_settlement_date(contract_code):
         wednesdays = [week[calendar.WEDNESDAY] for week in c if week[calendar.WEDNESDAY] != 0]
         fridays = [week[calendar.FRIDAY] for week in c if week[calendar.FRIDAY] != 0]
         day = None
-        if 'W' in code:
+        if 'W' in code: 
             match = re.search(r'W(\d)', code)
             if match:
                 week_num = int(match.group(1))
                 if len(wednesdays) >= week_num: day = wednesdays[week_num - 1]
-        elif 'F' in code:
+        elif 'F' in code: 
             match = re.search(r'F(\d)', code)
             if match:
                 week_num = int(match.group(1))
                 if len(fridays) >= week_num: day = fridays[week_num - 1]
-        else:
+        else: 
             if len(wednesdays) >= 3: day = wednesdays[2]
         if day: return f"{year}/{month:02d}/{day:02d}"
         else: return "9999/99/99"
@@ -108,7 +104,6 @@ def get_settlement_date(contract_code):
 
 @st.cache_data(ttl=60)
 def get_realtime_data():
-    """取得台指現貨即時報價"""
     taiex = None
     ts = int(time.time())
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -133,7 +128,6 @@ def get_realtime_data():
 
 @st.cache_data(ttl=300)
 def get_option_data():
-    """從期交所取得最近一期選擇權每日交易資訊"""
     url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
     headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(5):
@@ -176,7 +170,6 @@ def get_option_data():
     return None, None
 
 def plot_tornado_chart(df_target, title_text, spot_price):
-    """繪製 Call/Put OI 龍捲風圖 (略)"""
     is_call = df_target['Type'].str.contains('買|Call', case=False, na=False)
     df_call = df_target[is_call][['Strike', 'OI', 'Amount']].rename(columns={'OI': 'Call_OI', 'Amount': 'Call_Amt'})
     df_put = df_target[~is_call][['Strike', 'OI', 'Amount']].rename(columns={'OI': 'Put_OI', 'Amount': 'Put_Amt'})
@@ -225,11 +218,18 @@ def ask_gemini_brief(df, taiex_price):
         
         data_str = df_ai.to_csv(index=False)
         
+        # *** 修正後的莊家控盤提示詞 (Gemini) ***
         prompt = f"""
-        你是一個台指期貨交易助手。
+        你現在是台指選擇權市場的【主要控盤者】（莊家）。你的目標是確保選擇權部位能夠在結算時獲得最大利潤或最小虧損。
         現在大盤現貨價格：{taiex_price}。
-        請分析這份選擇權籌碼 (CSV)，並直接給出【短線操作建議】。
-        規則：1. 不要解釋你的分析過程。2. 直接告訴我結論：市場目前是偏多、偏空、還是震盪？3. 給出具體建議。4. 字數控制在 100 字以內，語氣簡潔有力。
+        請分析這份選擇權籌碼 (CSV)，並根據你的控盤視角，直接給出【預計的現貨點數走勢及操作建議】。
+
+        規則：
+        1. **角色扮演**：回答必須以「控盤方」的立場，說明接下來的盤勢規劃。
+        2. **走勢結論**：直接告訴我，為了對你的選擇權部位最有利，你會將現貨指數拉高、壓低、還是維持在特定區間？
+        3. **給出具體建議**：針對散戶或一般投資者，給出具體操作建議，例如「逢低佈局 Call」、「逢高做空 Put」或「高出低進」。
+        4. 字數控制在 120 字以內，語氣權威簡潔。
+
         數據：
         {data_str}
         """
@@ -251,11 +251,18 @@ def ask_openai_brief(df, taiex_price):
         
         data_str = df_ai.to_csv(index=False)
         
+        # *** 修正後的莊家控盤提示詞 (ChatGPT) ***
         prompt = f"""
-        你是一個台指期貨交易助手。
+        你現在是台指選擇權市場的【主要控盤者】（莊家）。你的目標是確保選擇權部位能夠在結算時獲得最大利潤或最小虧損。
         現在大盤現貨價格：{taiex_price}。
-        請分析這份選擇權籌碼 (CSV)，並直接給出【短線操作建議】。
-        規則：1. 不要解釋你的分析過程。2. 直接告訴我結論：市場目前是偏多、偏空、還是震盪？3. 給出具出具體建議。4. 字數控制在 100 字以內，語氣簡潔有力。
+        請分析這份選擇權籌碼 (CSV)，並根據你的控盤視角，直接給出【預計的現貨點數走勢及操作建議】。
+
+        規則：
+        1. **角色扮演**：回答必須以「控盤方」的立場，說明接下來的盤勢規劃。
+        2. **走勢結論**：直接告訴我，為了對你的選擇權部位最有利，你會將現貨指數拉高、壓低、還是維持在特定區間？
+        3. **給出具體建議**：針對散戶或一般投資者，給出具體操作建議，例如「逢低佈局 Call」、「逢高做空 Put」或「高出低進」。
+        4. 字數控制在 120 字以內，語氣權威簡潔。
+
         數據：
         {data_str}
         """
@@ -263,7 +270,7 @@ def ask_openai_brief(df, taiex_price):
         response = openai_client.chat.completions.create(
             model=openai_model_name,
             messages=[
-                {"role": "system", "content": "你是一位專業且簡潔的台指期貨交易策略分析師。"},
+                {"role": "system", "content": "你是一位專業且簡潔的台指期貨交易策略分析師，請以莊家控盤者的視角來分析。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
@@ -277,10 +284,12 @@ def ask_openai_brief(df, taiex_price):
 def main():
     st.title("🤖 台指期籌碼戰情室 (雙 AI 決策版)")
     
+    # 側邊欄重新整理按鈕
     if st.sidebar.button("🔄 重新整理"): st.cache_data.clear(); st.rerun()
 
     with st.spinner('連線期交所中...'):
-        df, data_date = get_option_data()
+        # 這裡的 df 數據會自動選取最近結算的合約日期
+        df, data_date = get_option_data() 
         taiex_now = get_realtime_data()
 
     if df is None: st.error("查無資料，請稍後再試。"); return
@@ -303,30 +312,28 @@ def main():
     # ==========================================
     # 🌟 雙 AI 分析區塊 🌟
     # ==========================================
-    st.markdown("### 💡 雙 AI 短線錦囊 (點擊取得建議)")
+    st.markdown("### 💡 雙 AI 控盤錦囊 (點擊取得建議)")
     
-    # 1. 設置一個按鈕，讓用戶手動觸發分析 (避免每次刷新都耗費 API 點數)
     if st.button("🚀 啟動雙 AI 策略分析", type="primary"):
         
-        # 2. 創建兩欄，分別顯示 Gemini 和 ChatGPT 的結果
         ai_col1, ai_col2 = st.columns(2)
         
         # --- Gemini 分析 (左欄) ---
         with ai_col1:
-            st.markdown(f"#### 💎 Gemini 建議 ({gemini_model_name})")
-            with st.spinner("Gemini 正在擬定策略..."):
+            st.markdown(f"#### 💎 Gemini 控盤建議 ({gemini_model_name})")
+            with st.spinner("Gemini 正在以莊家視角擬定策略..."):
                 gemini_advice = ask_gemini_brief(df, taiex_now)
             st.info(gemini_advice)
         
         # --- ChatGPT 分析 (右欄) ---
         with ai_col2:
-            st.markdown(f"#### 💬 ChatGPT 建議 ({openai_model_name})")
-            with st.spinner("ChatGPT 正在擬定策略..."):
+            st.markdown(f"#### 💬 ChatGPT 控盤建議 ({openai_model_name})")
+            with st.spinner("ChatGPT 正在以莊家視角擬定策略..."):
                 openai_advice = ask_openai_brief(df, taiex_now)
             st.info(openai_advice)
 
 
-    # 繪圖 (略過繪圖程式碼以保持簡潔，但功能保留)
+    # 繪圖
     unique_codes = df['Month'].unique()
     all_contracts = []
     for code in unique_codes:
