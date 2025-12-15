@@ -18,7 +18,7 @@ from scipy.optimize import brentq
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 頁面設定 ---
-st.set_page_config(layout="wide", page_title="台指期權戰情室 (雲端堅韌版)")
+st.set_page_config(layout="wide", page_title="台指期權戰情室 (週一修正版)")
 TW_TZ = timezone(timedelta(hours=8))
 
 # ==========================================
@@ -35,7 +35,6 @@ except:
     OPENAI_API_KEY = ""
 
 def get_ai_response(prompt, model_type="gemini"):
-    """彈性 AI 呼叫"""
     if model_type == "gemini":
         if not GEMINI_API_KEY: return "⚠️ 未設定 GEMINI_API_KEY"
         try:
@@ -83,23 +82,21 @@ class QuantLib:
         try:
             d1 = (np.log(S / K) + (self.r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
             gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
-            return 0, gamma # 這裡我們主要需要 Gamma
+            return 0, gamma 
         except: return 0, 0
 
 ql = QuantLib()
 
 # ==========================================
-# 🕸️ 數據抓取模組 (能抓什麼就抓什麼)
+# 🕸️ 數據抓取模組
 # ==========================================
 
 @st.cache_data(ttl=60)
 def fetch_basic_market_data():
-    """只抓現貨與期貨 (Yahoo)，這是雲端最容易成功的數據"""
-    data = {"Spot": 0, "Future": 0, "Msg": "無數據"}
+    """只抓現貨 (Yahoo)"""
+    data = {"Spot": 0, "Msg": "無數據"}
     ts = int(time.time())
     headers = {"User-Agent": "Mozilla/5.0"}
-    
-    # 1. 抓現貨 (Yahoo)
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/%5ETWII?interval=1d&range=1d&_={ts}"
         res = requests.get(url, headers=headers, timeout=4)
@@ -107,36 +104,28 @@ def fetch_basic_market_data():
         price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
         if price: data["Spot"] = float(price)
     except: pass
-    
-    # 2. 抓期貨 (Yahoo WTX) - 嘗試抓取
-    # 若抓不到，UI 會預設用現貨代替
-    try:
-        # 這裡不強求抓期貨，避免錯誤，主要依賴現貨
-        pass 
-    except: pass
 
     if data["Spot"] > 0:
         data["Msg"] = "✅ 現貨行情更新成功"
     else:
         data["Msg"] = "⚠️ 無法抓取行情，請手動輸入"
-        
     return data
 
 @st.cache_data(ttl=300)
 def fetch_option_data_best_effort():
-    """盡力抓取選擇權資料，失敗回傳 None"""
+    """盡力抓取選擇權資料 (修正回溯天數問題)"""
     url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
     now = datetime.now(tz=TW_TZ)
     
-    # 偽裝 Header
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Origin": "https://www.taifex.com.tw",
         "Referer": "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
     }
 
-    # 嘗試抓取最近 3 天 (只要抓到一天就好)
-    for i in range(3):
+    # 🔥 關鍵修正：將回溯天數從 3 改為 10
+    # 這樣週一執行時 (回溯0,1,2=一,日,六) 也能繼續找 (3=五)
+    for i in range(10):
         d = now - timedelta(days=i)
         d_str = d.strftime("%Y/%m/%d")
         payload = {
@@ -144,15 +133,12 @@ def fetch_option_data_best_effort():
             "queryDate": d_str, "MarketCode": "0", "commodity_idt": "TXO"
         }
         try:
-            # verify=False 繞過 SSL 檢查
             res = requests.post(url, data=payload, headers=headers, timeout=6, verify=False)
             if "查無資料" in res.text or len(res.text) < 500: continue
             
-            # 解析
             df = pd.read_html(StringIO(res.text))[0]
             df.columns = [str(c).replace(" ","").replace("*","").replace("契約","").strip() for c in df.columns]
             
-            # 欄位映射
             col_map = {}
             for c in df.columns:
                 if "月" in c: col_map["Month"] = c
@@ -166,7 +152,6 @@ def fetch_option_data_best_effort():
             df = df.rename(columns=col_map)
             df = df[["Month","Strike","Type","OI","Price"]].dropna(subset=["Type"]).copy()
             
-            # 數據清洗
             df["Type"] = df["Type"].astype(str).str.strip()
             df["Strike"] = pd.to_numeric(df["Strike"].astype(str).str.replace(",",""), errors="coerce")
             df["OI"] = pd.to_numeric(df["OI"].astype(str).str.replace(",",""), errors="coerce").fillna(0)
@@ -187,7 +172,6 @@ def process_uploaded_csv(uploaded_file):
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, encoding='utf-8', header=0)
         
-        # 簡易清洗邏輯同上... (略為簡化以節省空間)
         df.columns = [str(c).replace(" ","").replace("*","").replace("契約","").strip() for c in df.columns]
         col_map = {}
         for c in df.columns:
@@ -232,12 +216,10 @@ def plot_tornado(df, spot_price, title):
     df_p = df[df["Type"].str.contains("Put|賣")].groupby("Strike")[["OI","Amount"]].sum().reset_index()
     data = pd.merge(df_c, df_p, on="Strike", suffixes=("_C", "_P"), how="outer").fillna(0).sort_values("Strike")
     
-    # 聚焦
     if spot_price > 0:
         base = round(spot_price/100)*100
         data = data[(data["Strike"] >= base-1000) & (data["Strike"] <= base+1000)]
     else:
-        # 如果沒現貨價，只秀 OI 最大的區域
         max_idx = data["OI_P"].idxmax()
         center = data.loc[max_idx, "Strike"]
         data = data[(data["Strike"] >= center-1000) & (data["Strike"] <= center+1000)]
@@ -250,7 +232,8 @@ def plot_tornado(df, spot_price, title):
     
     if spot_price > 0:
         fig.add_hline(y=spot_price, line_dash="dash", line_color="orange")
-        
+        fig.add_annotation(x=0, y=spot_price, text=f"現貨 {int(spot_price)}", showarrow=False, bgcolor="orange", font=dict(color="white"))
+
     fig.update_layout(title=title, barmode='overlay', yaxis=dict(dtick=50, tickformat='d'), height=700)
     return fig
 
@@ -258,45 +241,36 @@ def plot_tornado(df, spot_price, title):
 # 🚀 主程式
 # ==========================================
 def main():
-    st.title("🦅 台指期權戰情室 (雲端堅韌版)")
+    st.title("🦅 台指期權戰情室 (週一修正版)")
     
     if st.sidebar.button("🔄 重新掃描數據"):
         st.cache_data.clear()
         st.rerun()
 
-    # 1. 抓取「一定抓得到的」基本行情
     with st.spinner("正在掃描即時行情..."):
         basic_data = fetch_basic_market_data()
         spot = basic_data["Spot"]
 
-    # 2. 嘗試抓取「可能抓不到」的選擇權
-    with st.spinner("嘗試抓取選擇權籌碼 (若雲端IP被擋將自動跳過)..."):
+    with st.spinner("嘗試抓取選擇權籌碼 (回溯最近交易日)..."):
         df_opt, date_str = fetch_option_data_best_effort()
 
-    # --- 儀表板 (無論有沒有選擇權，這裡都要顯示) ---
     with st.container(border=True):
         c1, c2, c3 = st.columns([1, 1, 2])
         c1.metric("加權指數 (Spot)", f"{spot:.0f}" if spot > 0 else "N/A", basic_data["Msg"])
-        
-        # 手動校正/輸入 (如果自動抓不到，或想模擬)
         manual_spot = c3.number_input("🛠️ 手動輸入/校正點位", value=spot if spot > 0 else 0.0, step=1.0)
     
     final_price = manual_spot if manual_spot > 0 else spot
 
-    # --- 處理選擇權資料 (若自動抓取失敗，提供上傳選項) ---
     if df_opt is None:
-        st.warning("⚠️ 自動抓取選擇權失敗 (可能是雲端 IP 被期交所阻擋)。")
-        st.info("💡 但別擔心，系統並未崩潰。您可以：\n1. 僅使用上方的現貨數據進行簡易分析。\n2. **(推薦)** 手動上傳 CSV 檔來解鎖完整圖表。")
-        
+        st.warning("⚠️ 自動抓取失敗 (已嘗試回溯10天)。")
+        st.info("💡 建議手動上傳 CSV 以解鎖圖表。")
         uploaded_file = st.file_uploader("📂 拖入期交所 CSV 檔 (選填)", type=["csv"])
         if uploaded_file:
             df_opt, date_str = process_uploaded_csv(uploaded_file)
 
-    # --- 若有選擇權資料，顯示圖表 ---
     if df_opt is not None:
         st.success(f"✅ 成功載入選擇權籌碼！資料日期: {date_str}")
         
-        # 合約過濾
         all_codes = sorted(df_opt["Month"].unique())
         def_idx = 0
         for i, c in enumerate(all_codes):
@@ -305,7 +279,6 @@ def main():
         
         df_target = df_opt[df_opt["Month"] == sel_code].copy()
         
-        # 運算 GEX
         df_calc = calculate_gex(df_target, final_price)
         
         tab1, tab2 = st.tabs(["🌪️ 籌碼龍捲風", "⚡ GEX Gamma 曝險"])
@@ -313,7 +286,7 @@ def main():
             st.plotly_chart(plot_tornado(df_calc, final_price, f"OI 分布: {sel_code}"), use_container_width=True)
         with tab2:
             gex = df_calc.groupby("Strike")["GEX"].sum().reset_index()
-            if final_price > 0: # 聚焦
+            if final_price > 0:
                 base = round(final_price/100)*100
                 gex = gex[(gex["Strike"] >= base-800) & (gex["Strike"] <= base+800)]
             colors = ['red' if v >= 0 else 'green' for v in gex["GEX"]]
@@ -321,12 +294,10 @@ def main():
             if final_price > 0: fig.add_vline(x=final_price, line_dash="dash", line_color="orange")
             fig.update_layout(title="Dealer Gamma Exposure", yaxis_title="GEX (M)", xaxis_title="Strike")
             st.plotly_chart(fig, use_container_width=True)
-            st.caption("🔴 紅色(正): 黏滯/阻力 | 🟢 綠色(負): 加速/滑價")
+            st.caption("紅色=黏滯/阻力 | 綠色=加速/滑價")
 
-    # --- AI 分析 (永遠可用，即使只有現貨) ---
     st.markdown("---")
     if st.button("🤖 啟動 AI 莊家分析", type="primary"):
-        # 建構提示詞 (根據有無籌碼調整)
         if df_opt is not None:
             prompt = f"""
             你現在是台指期權的冷血莊家。
@@ -344,15 +315,13 @@ def main():
             - **目前大盤現貨點位**: {final_price}
             
             請你根據這個點位，結合你資料庫中對近期台股的盤感，
-            推測外資與主力的可能心態（是想拉高結算還是殺盤？）。
-            (請註明這是基於純點位的推測，缺乏精確籌碼數據)
+            推測外資與主力的可能心態。
             """
             
-        with st.spinner("AI 正在思考..."):
+        with st.spinner("AI 運算中..."):
             res = get_ai_response(prompt, "gemini")
             if "未設定" in res: res = get_ai_response(prompt, "openai")
             st.info(res)
 
 if __name__ == "__main__":
     main()
-    
