@@ -28,22 +28,44 @@ except FileNotFoundError:
     GEMINI_KEY = ""
     OPENAI_KEY = ""
 
-# --- 🧠 1. Gemini 模型設定 ---
+# --- 🧠 1. Gemini 模型設定 (修正版：解決 404 錯誤) ---
 def get_gemini_model(api_key):
     if not api_key: return None, "未設定"
     genai.configure(api_key=api_key)
     try:
-        target_model_name = 'gemini-1.5-flash'
-        return genai.GenerativeModel(target_model_name), target_model_name
+        # 1. 先取得所有支援 generateContent 的模型列表
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        target_model_name = None
+        
+        # 2. 定義優先搜尋順序 (包含 models/ 前綴以防萬一)
+        priority_targets = [
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
+            'gemini-pro',
+            'flash'
+        ]
+        
+        # 3. 匹配模型
+        for target in priority_targets:
+            for model_id in available_models:
+                if target in model_id.lower():
+                    target_model_name = model_id
+                    break
+            if target_model_name:
+                break
+        
+        # 4. 如果都沒匹配到，但有可用模型，取第一個
+        if not target_model_name and available_models:
+            target_model_name = available_models[0]
+            
+        if target_model_name:
+            return genai.GenerativeModel(target_model_name), target_model_name
+        else:
+            return None, "無可用模型 (ListModels Empty)"
+
     except Exception as e:
-        try:
-            models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            for target in ['flash', 'gemini-1.5-pro']:
-                for m in models:
-                    if target in m.lower(): return genai.GenerativeModel(m), m
-            return (genai.GenerativeModel(models[0]), models[0]) if models else (None, "無可用模型")
-        except Exception as e2:
-            return None, f"模型設定錯誤: {str(e)}"
+        return None, f"模型設定錯誤: {str(e)}"
 
 # --- 🧠 2. ChatGPT 模型設定 ---
 def get_openai_client(api_key):
@@ -940,6 +962,22 @@ def ask_gemini(prompt_text):
         return "⚠️ Gemini 拒絕回答：Prompt 觸發了安全審查，請嘗試修飾用詞。"
     except Exception as e:
         return f"Gemini 錯誤: {str(e)}"
+
+# --- 🆕 補上缺失的 ask_chatgpt 函式 ---
+def ask_chatgpt(prompt_text):
+    if not openai_client: return "⚠️ 未設定 OpenAI Key"
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini", # 或是 gpt-3.5-turbo
+            messages=[
+                {"role": "system", "content": "你是專業的期貨莊家分析師。"},
+                {"role": "user", "content": prompt_text}
+            ],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"ChatGPT 錯誤: {str(e)}"
 
 # --- 主程式 ---
 def main():
