@@ -70,7 +70,7 @@ def configure_openai(api_key):
         client = OpenAI(api_key=api_key)
         # 試探呼叫確認 Key 有效
         _ = client.models.list()
-        return client, "gpt-4o-mini" # 建議改用 4o-mini 或 3.5-turbo
+        return client, "gpt-4o-mini"  # 建議改用 4o-mini 或 3.5-turbo
     except Exception as e:
         return None, f"連線錯誤: {str(e)}"
 
@@ -150,7 +150,7 @@ def get_realtime_data():
         meta = data["chart"]["result"][0]["meta"]
         price = meta.get("regularMarketPrice")
         if price is None:
-            price = meta.get("chartPreviousClose") 
+            price = meta.get("chartPreviousClose")
         if price:
             taiex = float(price)
     except Exception:
@@ -171,7 +171,6 @@ def get_realtime_data():
             pass
 
     return taiex
-
 
 # --- 期交所選擇權資料 ---
 @st.cache_data(ttl=300)
@@ -247,7 +246,6 @@ def get_option_data():
 
     return None, None
 
-
 # --- Tornado 圖 ---
 def plot_tornado_chart(df_target, title_text, spot_price):
     is_call = df_target["Type"].str.contains("買|Call", case=False, na=False)
@@ -266,7 +264,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     total_put_money = data["Put_Amt"].sum()
     total_call_money = data["Call_Amt"].sum()
 
-    data = data[(data["Call_OI"] > 300) | (data["Put_OI"] > 300)]
+    data = data[(data["Call_OI"] > 300) or (data["Put_OI"] > 300)]
     
     # 聚焦
     FOCUS_RANGE = 1200
@@ -303,7 +301,6 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig.update_layout(title=dict(text=title_text, y=0.95, x=0.5, xanchor="center", yanchor="top", font=dict(size=20, color="black")), xaxis=dict(title="未平倉量 (OI)", range=[-x_limit, x_limit], showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor="black", tickmode="array", tickvals=[-x_limit * 0.75, -x_limit * 0.5, -x_limit * 0.25, 0, x_limit * 0.25, x_limit * 0.5, x_limit * 0.75], ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]), yaxis=dict(title="履約價", tickmode="linear", dtick=100, tickformat="d"), barmode="overlay", legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"), height=750, margin=dict(l=40, r=80, t=140, b=60), annotations=annotations, paper_bgcolor="white", plot_bgcolor="white")
     return fig
 
-
 # --- AI 分析函式 (Gemini - 莊家獵殺版) ---
 def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
     if not gemini_model:
@@ -318,14 +315,14 @@ def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
 
         # 🚀 提示詞修改重點：莊家思維、無風險提示、詳細劇本
         prompt = f"""
-你現在是台指選擇權市場的【主力莊家】。你的目標只有一個：**在結算日吃掉最多散戶的權利金，讓自己的利潤最大化**。
+你現在是台指選擇權市場的主力莊家。你的目標只有一個：**在結算日吃掉最多散戶的權利金，讓自己的利潤最大化**。
 
-【市場現況】
+市場現況
 - 結算合約：{contract_code} (結算日: {settlement_date})
 - 現貨指數（即時運算）：{taiex_price}
   (請以此價格為目前的控盤基準，忽略過時數據)
 
-【任務】
+任務
 請根據 CSV 籌碼數據（OI 與 Amount），進行深度的控盤推演：
 
 1. **肥羊與雷區分析**：
@@ -342,7 +339,7 @@ def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
 4. **莊家指令**：
    - 給出簡短有力的指令（例如：Sell Call @ 28200, Buy Put @ 28000 避險）。
 
-【回答要求】
+回答要求
 - 使用第一人稱（本莊、我）。
 - 語氣：**自信、冷血、貪婪**。
 - **不要**給出任何風險警語或教育性廢話。
@@ -355,7 +352,6 @@ def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
         return response.text
     except Exception as e:
         return f"分析忙碌中 ({str(e)})"
-
 
 # --- AI 分析函式 (ChatGPT - 莊家獵殺版) ---
 def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
@@ -371,14 +367,14 @@ def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
 
         # 🚀 提示詞修改重點：莊家思維、無風險提示、詳細劇本
         user_prompt = f"""
-你現在是台指選擇權市場的【主力莊家】。你的目標只有一個：**在結算日吃掉最多散戶的權利金，讓自己的利潤最大化**。
+你現在是台指選擇權市場的主力莊家。你的目標只有一個：**在結算日吃掉最多散戶的權利金，讓自己的利潤最大化**。
 
-【市場現況】
+市場現況
 - 結算合約：{contract_code} (結算日: {settlement_date})
 - 現貨指數（即時運算）：{taiex_price}
   (請以此價格為目前的控盤基準，忽略過時數據)
 
-【任務】
+任務
 請根據 CSV 籌碼數據（OI 與 Amount），進行深度的控盤推演：
 
 1. **肥羊與雷區分析**：
@@ -395,7 +391,7 @@ def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
 4. **莊家指令**：
    - 給出簡短有力的指令（例如：Sell Call @ 28200, Buy Put @ 28000 避險）。
 
-【回答要求】
+回答要求
 - 使用第一人稱（本莊、我）。
 - 語氣：**自信、冷血、貪婪**。
 - **不要**給出任何風險警語或教育性廢話。
@@ -414,8 +410,8 @@ def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
                 },
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.7, # 提高創造力，讓劇本更豐富
-            max_tokens=800,  # 增加 token 限制，允許更長的分析
+            temperature=0.7,  # 提高創造力，讓劇本更豐富
+            max_tokens=800,   # 增加 token 限制，允許更長的分析
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -433,7 +429,7 @@ def main():
 
     with st.spinner("連線期交所中..."):
         df, data_date = get_option_data()
-        auto_taiex = get_realtime_data() # 改名為 auto_taiex 以示區別
+        auto_taiex = get_realtime_data()  # 改名為 auto_taiex 以示區別
 
     if df is None:
         st.error("查無資料，請稍後再試。")
@@ -521,9 +517,317 @@ def main():
             else:
                 plot_targets[0]["title"] = "最近結算 (同月選)"
 
-    # ==========================================
+    # 🆕 Call/Put OI 全履約價分布
+    st.markdown("### Call/Put OI 全履約價分布")
+    # 將全市場所有履約價的 Call 與 Put 未平倉量彙總
+    df_all_call = df[df["Type"].str.contains("買|Call", case=False, na=False)]
+    df_all_put = df[df["Type"].str.contains("賣|Put", case=False, na=False)]
+    call_oi_by_strike = df_all_call.groupby("Strike")["OI"].sum()
+    put_oi_by_strike = df_all_put.groupby("Strike")["OI"].sum()
+    df_oi = pd.DataFrame({"Strike": call_oi_by_strike.index.union(put_oi_by_strike.index)})
+    df_oi["Call_OI"] = df_oi["Strike"].map(call_oi_by_strike).fillna(0)
+    df_oi["Put_OI"] = df_oi["Strike"].map(put_oi_by_strike).fillna(0)
+    df_oi = df_oi.sort_values("Strike")
+    # 使用 Plotly 繪製 OI 分布圖
+    fig_oi = go.Figure()
+    fig_oi.add_trace(go.Scatter(x=df_oi["Strike"], y=df_oi["Call_OI"], mode="lines", name="Call OI"))
+    fig_oi.add_trace(go.Scatter(x=df_oi["Strike"], y=df_oi["Put_OI"], mode="lines", name="Put OI"))
+    fig_oi.update_layout(title="全履約價 Call/Put 未平倉量分布", xaxis_title="履約價", yaxis_title="未平倉量 (口)")
+    st.plotly_chart(fig_oi, use_container_width=True)
+
+    # 🆕 近三日 OI 變化分析
+    st.markdown("### 近三日 OI 變化分析")
+    # 定義函數取得指定日期的選擇權資料 DataFrame
+    def fetch_option_data_for_date(date_str):
+        url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        payload = {
+            "queryType": "2",
+            "marketCode": "0",
+            "dateaddcnt": "",
+            "commodity_id": "TXO",
+            "commodity_id2": "",
+            "queryDate": date_str,
+            "MarketCode": "0",
+            "commodity_idt": "TXO"
+        }
+        try:
+            res = requests.post(url, data=payload, headers=headers, timeout=5)
+            if "查無資料" in res.text or len(res.text) < 1000:
+                return None
+            dfs = pd.read_html(StringIO(res.text))
+            df_temp = dfs[0]
+            df_temp.columns = [str(c).replace(" ", "").replace("*", "").replace("契約", "").strip() for c in df_temp.columns]
+            month_col = next((c for c in df_temp.columns if "月" in c or "週" in c), None)
+            strike_col = next((c for c in df_temp.columns if "履約" in c), None)
+            type_col = next((c for c in df_temp.columns if "買賣" in c), None)
+            oi_col = next((c for c in df_temp.columns if "未沖銷" in c or "OI" in c), None)
+            price_col = next((c for c in df_temp.columns if "結算" in c or "收盤" in c or "Price" in c), None)
+            if not all([month_col, strike_col, type_col, oi_col, price_col]):
+                return None
+            df_temp = df_temp.rename(columns={
+                month_col: "Month",
+                strike_col: "Strike",
+                type_col: "Type",
+                oi_col: "OI",
+                price_col: "Price"
+            })
+            df_temp = df_temp[["Month", "Strike", "Type", "OI", "Price"]].copy()
+            df_temp = df_temp.dropna(subset=["Type"])
+            df_temp["Type"] = df_temp["Type"].astype(str).str.strip()
+            df_temp["Strike"] = pd.to_numeric(df_temp["Strike"].astype(str).replace(",", "", regex=True), errors="coerce")
+            df_temp["OI"] = pd.to_numeric(df_temp["OI"].astype(str).replace(",", "", regex=True), errors="coerce").fillna(0)
+            return df_temp
+        except Exception:
+            return None
+
+    # 抓取連續三個交易日的 OI 資料
+    dates_data = []
+    for i in range(0, 7):
+        date_iter = (datetime.now(tz=TW_TZ) - timedelta(days=i)).strftime("%Y/%m/%d")
+        if date_iter == data_date:
+            dates_data.append((date_iter, df))
+        else:
+            df_iter = fetch_option_data_for_date(date_iter)
+            if df_iter is not None:
+                dates_data.append((date_iter, df_iter))
+        if len(dates_data) >= 3:
+            break
+    dates_data.sort(key=lambda x: x[0])
+    if len(dates_data) < 3:
+        st.error("無法取得近三日資料，請稍後再試。")
+    else:
+        date_old, df_old = dates_data[0]
+        date_mid, df_mid = dates_data[1]
+        date_new, df_new = dates_data[2]
+        # 按 Strike+Type 聚合每日期 OI 總和
+        df_old_tot = df_old.groupby(["Strike", "Type"])["OI"].sum().reset_index()
+        df_new_tot = df_new.groupby(["Strike", "Type"])["OI"].sum().reset_index()
+        # 合併新舊OI資料
+        df_merge = pd.merge(df_new_tot, df_old_tot, on=["Strike", "Type"], how="outer", suffixes=("_new", "_old")).fillna(0)
+        df_merge["OI_change"] = df_merge["OI_new"] - df_merge["OI_old"]
+        # 切分 Call/Put
+        call_changes = df_merge[df_merge["Type"].str.contains("買|Call", case=False, na=False)].set_index("Strike")["OI_change"]
+        put_changes = df_merge[df_merge["Type"].str.contains("賣|Put", case=False, na=False)].set_index("Strike")["OI_change"]
+        strikes_all = sorted(set(call_changes.index).union(set(put_changes.index)))
+        call_vals = [call_changes.get(x, 0) for x in strikes_all]
+        put_vals = [put_changes.get(x, 0) for x in strikes_all]
+        fig_change = go.Figure()
+        fig_change.add_trace(go.Bar(x=strikes_all, y=call_vals, name="Call OI 增減"))
+        fig_change.add_trace(go.Bar(x=strikes_all, y=put_vals, name="Put OI 增減"))
+        fig_change.update_layout(barmode='group', title=f"{date_old} → {date_new} 各履約價OI增減", xaxis_title="履約價", yaxis_title="OI 增減 (口)")
+        st.plotly_chart(fig_change, use_container_width=True)
+
+    # 🆕 IV 與 Skew 分析
+    st.markdown("### IV 與 Skew 分析")
+    # 定義 Black-Scholes定價與隱含波動率計算函數
+    from math import log, sqrt, exp
+    from statistics import NormalDist
+    def bs_price(S, K, T, r, sigma, option_type="call"):
+        if T <= 0 or sigma <= 0:
+            return max(S-K, 0) if option_type == "call" else max(K-S, 0)
+        d1 = (log(S/K) + (0.5 * sigma**2) * T) / (sigma * sqrt(T))
+        d2 = d1 - sigma * sqrt(T)
+        N = NormalDist(0, 1)
+        if option_type == "call":
+            return S * N.cdf(d1) - K * exp(-r*T) * N.cdf(d2)
+        else:
+            return K * exp(-r*T) * N.cdf(-d2) - S * N.cdf(-d1)
+    def implied_vol(S, K, T, r, market_price, option_type="call"):
+        tol = 1e-4
+        max_iter = 50
+        low, high = 1e-6, 5.0
+        vol = None
+        for _ in range(max_iter):
+            mid = 0.5 * (low + high)
+            price = bs_price(S, K, T, r, mid, option_type)
+            if abs(price - market_price) < tol:
+                vol = mid
+                break
+            if price > market_price:
+                high = mid
+            else:
+                low = mid
+            vol = mid
+        return vol
+    # 選擇近月合約 (當月月選優先)
+    if 'monthly' in locals() and monthly:
+        skew_code = monthly["code"]
+        skew_date = monthly["date"]
+    else:
+        skew_code = nearest_code
+        skew_date = nearest_date
+    df_skew = df[df["Month"] == skew_code] if skew_code else pd.DataFrame()
+    if df_skew.empty:
+        st.info("找不到近月合約資料，無法計算 IV 與 Skew。")
+    else:
+        spot = final_taiex if final_taiex else 0
+        # 計算距離到期的年化時間
+        try:
+            exp_date = datetime.strptime(skew_date, "%Y/%m/%d")
+            days_to_exp = (exp_date - datetime.now(tz=TW_TZ)).days
+        except:
+            days_to_exp = 0
+        T = max(days_to_exp, 0) / 252
+        strikes_range = sorted(x for x in df_skew["Strike"].unique() if spot-300 <= x <= spot+300)
+        iv_points = {"Strike": [], "IV": []}
+        for K in strikes_range:
+            price_call = None
+            price_put = None
+            call_rows = df_skew[(df_skew["Strike"] == K) & (df_skew["Type"].str.contains("買|Call"))]
+            put_rows = df_skew[(df_skew["Strike"] == K) & (df_skew["Type"].str.contains("賣|Put"))]
+            if not call_rows.empty:
+                price_call = call_rows["Price"].iloc[0]
+            if not put_rows.empty:
+                price_put = put_rows["Price"].iloc[0]
+            iv_val = None
+            if price_call is not None and price_call > 0:
+                iv_val = implied_vol(spot, K, T, 0.0, price_call, "call")
+            elif price_put is not None and price_put > 0:
+                iv_val = implied_vol(spot, K, T, 0.0, price_put, "put")
+            if iv_val:
+                iv_points["Strike"].append(K)
+                iv_points["IV"].append(iv_val * 100)
+        if not iv_points["Strike"]:
+            st.info("無法取得隱含波動率資料。")
+        else:
+            fig_skew = go.Figure()
+            fig_skew.add_trace(go.Scatter(x=iv_points["Strike"], y=iv_points["IV"], mode="lines+markers", name="IV(%)"))
+            # 計算 25Δ Risk Reversal
+            call25_iv = None
+            put25_iv = None
+            for K, iv in zip(iv_points["Strike"], iv_points["IV"]):
+                sigma = iv / 100.0
+                if T > 0 and sigma > 0:
+                    d1 = (log(spot/K) + 0.5 * sigma**2 * T) / (sigma * sqrt(T))
+                    delta_call = NormalDist(0, 1).cdf(d1)
+                else:
+                    delta_call = 0.0
+                if call25_iv is None and delta_call <= 0.25:
+                    call25_iv = iv
+                if put25_iv is None and delta_call <= 0.75:
+                    put25_iv = iv
+            rr_text = ""
+            if call25_iv is not None and put25_iv is not None:
+                rr_val = call25_iv - put25_iv
+                rr_text = f" (25Δ RR: {rr_val:.2f}%)"
+            fig_skew.update_layout(title=f"{skew_code} IV Skew 曲線{rr_text}", xaxis_title="履約價", yaxis_title="隱含波動率(%)")
+            st.plotly_chart(fig_skew, use_container_width=True)
+
+    # 🆕 現貨/期貨/基差資料
+    st.markdown("### 現貨/期貨/基差資料")
+    fut_price = None
+    basis_val = None
+    foreign_net = None
+    try:
+        today_str = data_date
+        url_fut = "https://www.taifex.com.tw/cht/3/futDailyMarketReport"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        payload_fut = {"queryType": "2", "marketcode": "0", "commodity_id": "TX", "queryDate": today_str, "MarketCode": "0", "commodity_idt": "TX"}
+        res_fut = requests.post(url_fut, data=payload_fut, headers=headers, timeout=5)
+        text = res_fut.text
+        front_code = (monthly["code"] if 'monthly' in locals() and monthly else nearest_code)
+        if front_code:
+            front_code = front_code[:6]  # 年月
+            idx = text.find(front_code)
+            if idx != -1:
+                lines = text[idx:].splitlines()
+                if len(lines) > 1:
+                    data_line = lines[1]
+                    parts = re.split(r"\s+", data_line.strip())
+                    if len(parts) > 4:
+                        try:
+                            fut_price = float(parts[3]) if parts[3] != '-' else None
+                        except:
+                            fut_price = None
+        if fut_price and final_taiex:
+            basis_val = fut_price - final_taiex
+    except Exception:
+        fut_price = None
+    # 抓取外資期貨淨部位
+    try:
+        url_inst = "https://www.taifex.com.tw/cht/3/futContractsDate"
+        res_inst = requests.get(url_inst, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        text_inst = res_inst.text
+        net_total = 0
+        for code_num in ["1", "4", "5"]:
+            idx = text_inst.find(f">{code_num}<")
+            if idx != -1:
+                segment = text_inst[idx:text_inst.find("</tr>", idx)]
+                foreign_idx = segment.find("外資")
+                if foreign_idx != -1:
+                    sub_seg = segment[foreign_idx:]
+                    cols = re.findall(r">(.*?)<", sub_seg)
+                    cols = [c.strip() for c in cols if c.strip()]
+                    if cols:
+                        try:
+                            net_val = int(cols[-1].replace(",", ""))
+                        except:
+                            net_val = 0
+                        net_total += net_val
+        foreign_net = net_total
+    except Exception:
+        foreign_net = None
+    col_spot, col_fut, col_basis, col_foreign = st.columns(4)
+    col_spot.metric("現貨指數", f"{int(final_taiex) if final_taiex else 'N/A'}")
+    col_fut.metric("期貨價格", f"{int(fut_price) if fut_price else 'N/A'}")
+    col_basis.metric("基差 (期貨-現貨)", f"{basis_val:+.0f}" if basis_val is not None else "N/A")
+    col_foreign.metric("外資期貨淨部位", f"{foreign_net:+,} 口" if foreign_net is not None else "N/A")
+
+    # 🆕 Dealer Gamma Exposure
+    st.markdown("### Dealer Gamma Exposure")
+    gamma_code = monthly["code"] if 'monthly' in locals() and monthly else nearest_code
+    df_gamma = df[df["Month"] == gamma_code] if gamma_code else pd.DataFrame()
+    if df_gamma.empty:
+        st.info("無法計算 Gamma Exposure (缺少近月合約資料)。")
+    else:
+        gamma_settle_date = get_settlement_date(gamma_code)
+        try:
+            exp_date = datetime.strptime(gamma_settle_date, "%Y/%m/%d")
+            days_to_exp_g = (exp_date - datetime.now(tz=TW_TZ)).days
+        except:
+            days_to_exp_g = 0
+        T_g = max(days_to_exp_g, 0) / 252
+        S0 = final_taiex if final_taiex else 0
+        # 定義期權 Gamma 計算
+        def bs_gamma(S, K, T, sigma):
+            if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+                return 0.0
+            d1 = (log(S/K) + 0.5 * sigma**2 * T) / (sigma * sqrt(T))
+            return NormalDist(0, 1).pdf(d1) / (S * sigma * sqrt(T))
+        gamma_data = []
+        for strike in sorted(df_gamma["Strike"].unique()):
+            OI_call = df_gamma[(df_gamma["Strike"] == strike) & (df_gamma["Type"].str.contains("買|Call"))]["OI"].sum()
+            OI_put = df_gamma[(df_gamma["Strike"] == strike) & (df_gamma["Type"].str.contains("賣|Put"))]["OI"].sum()
+            if OI_call == 0 and OI_put == 0:
+                continue
+            # 取隱含波動率
+            vol_call = None
+            vol_put = None
+            call_row = df_gamma[(df_gamma["Strike"] == strike) & (df_gamma["Type"].str.contains("買|Call"))]
+            put_row = df_gamma[(df_gamma["Strike"] == strike) & (df_gamma["Type"].str.contains("賣|Put"))]
+            if not call_row.empty and call_row["Price"].iloc[0] > 0:
+                vol_call = implied_vol(S0, strike, T_g, 0.0, call_row["Price"].iloc[0], "call")
+            if not put_row.empty and put_row["Price"].iloc[0] > 0:
+                vol_put = implied_vol(S0, strike, T_g, 0.0, put_row["Price"].iloc[0], "put")
+            sigma_use = vol_call if vol_call is not None else vol_put
+            if sigma_use is None or sigma_use <= 0:
+                continue
+            gamma_val = bs_gamma(S0, strike, T_g, sigma_use)
+            total_gamma = gamma_val * (OI_call + OI_put) * 50
+            gamma_data.append((strike, total_gamma))
+        if not gamma_data:
+            st.info("無 Gamma 資料。")
+        else:
+            gamma_data.sort(key=lambda x: x[0])
+            strikes_list = [x[0] for x in gamma_data]
+            gamma_list = [x[1] for x in gamma_data]
+            fig_gamma = go.Figure()
+            fig_gamma.add_trace(go.Bar(x=strikes_list, y=gamma_list, name="Gamma Exposure"))
+            fig_gamma.update_layout(title=f"{gamma_code} Dealer Gamma Exposure", xaxis_title="履約價", yaxis_title="Gamma 暴露值")
+            st.plotly_chart(fig_gamma, use_container_width=True)
+
     # 🌟 雙 AI 分析區塊 🌟
-    # ==========================================
     st.markdown("### 💡 雙 AI 莊家控盤室")
 
     if nearest_code and nearest_df is not None and not nearest_df.empty:
@@ -571,7 +875,7 @@ def main():
                 sub_ratio = (sub_put / sub_call * 100) if sub_call > 0 else 0
 
                 title_text = (
-                    f"<b>【{target['title']}】 {m_code}</b>"
+                    f"<b>{target['title']} {m_code}</b>"
                     f"<br><span style='font-size: 14px;'>結算: {s_date}</span>"
                     f"<br><span style='font-size: 14px;'>P/C金額比: {sub_ratio:.1f}% ({'偏多' if sub_ratio > 100 else '偏空'})</span>"
                 )
@@ -580,7 +884,6 @@ def main():
                 st.plotly_chart(plot_tornado_chart(df_target, title_text, final_taiex), use_container_width=True)
     else:
         st.info("目前無可識別的未來結算合約。")
-
 
 if __name__ == "__main__":
     main()
