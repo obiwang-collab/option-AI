@@ -1129,65 +1129,82 @@ def main():
             # 確保有 plot_targets
             if not plot_targets:
                 st.error("無法取得合約資訊")
-                return
-            
-            # 🆕 整合所有數據
-            data_str = prepare_ai_data(
-                df, 
-                inst_opt_today, 
-                inst_opt_yesterday, 
-                inst_fut_position,
-                futures_price,
-                taiex_now,
-                basis,
-                atm_iv if 'atm_iv' in locals() else None,
-                risk_reversal if 'risk_reversal' in locals() else None,
-                gex_summary if 'gex_summary' in locals() else None
-            )
-            
-            contract_info = plot_targets[0]['info']
-            prompt_text = build_ai_prompt(data_str, taiex_now, contract_info)
+            else:
+                # 初始化變數（避免 NameError）
+                atm_iv_value = locals().get('atm_iv', None)
+                risk_reversal_value = locals().get('risk_reversal', None)
+                gex_summary_value = locals().get('gex_summary', None)
+                
+                # 🆕 整合所有數據
+                data_str = prepare_ai_data(
+                    df, 
+                    inst_opt_today, 
+                    inst_opt_yesterday, 
+                    inst_fut_position,
+                    futures_price,
+                    taiex_now,
+                    basis,
+                    atm_iv_value,
+                    risk_reversal_value,
+                    gex_summary_value
+                )
+                
+                contract_info = plot_targets[0]['info']
+                prompt_text = build_ai_prompt(data_str, taiex_now, contract_info)
 
-            with st.spinner("🤖 AI 正在計算最大痛點、Gamma 壓力與獵殺區間..."):
-                gemini_result = None
-                chatgpt_result = None
+                with st.spinner("🤖 AI 正在計算最大痛點、Gamma 壓力與獵殺區間..."):
+                    gemini_result = None
+                    chatgpt_result = None
 
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    ai_futures = {}
-                    if gemini_model: 
-                        ai_futures['gemini'] = executor.submit(ask_gemini, prompt_text)
-                    if openai_client: 
-                        ai_futures['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
+                    # 使用 try-except 來捕捉任何錯誤
+                    try:
+                        with ThreadPoolExecutor(max_workers=2) as executor:
+                            ai_futures_dict = {}
+                            
+                            if gemini_model: 
+                                ai_futures_dict['gemini'] = executor.submit(ask_gemini, prompt_text)
+                            
+                            if openai_client: 
+                                ai_futures_dict['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
 
-                    for key, future in ai_futures.items():
-                        if key == 'gemini': 
-                            gemini_result = future.result()
-                        elif key == 'chatgpt': 
-                            chatgpt_result = future.result()
+                            for key, future in ai_futures_dict.items():
+                                try:
+                                    result = future.result(timeout=60)
+                                    if key == 'gemini': 
+                                        gemini_result = result
+                                    elif key == 'chatgpt': 
+                                        chatgpt_result = result
+                                except Exception as e:
+                                    if key == 'gemini':
+                                        gemini_result = f"⚠️ Gemini 執行錯誤: {str(e)}"
+                                    elif key == 'chatgpt':
+                                        chatgpt_result = f"⚠️ ChatGPT 執行錯誤: {str(e)}"
+                    except Exception as e:
+                        st.error(f"AI 分析執行錯誤: {str(e)}")
 
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("🔵 Google Gemini")
-                if gemini_model:
-                    if gemini_result:
-                        st.info(gemini_result)
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("🔵 Google Gemini")
+                    if gemini_model:
+                        if gemini_result:
+                            st.info(gemini_result)
+                        else:
+                            st.warning("無回應 (可能觸發安全限制或 API 額度用罄)")
                     else:
-                        st.warning("無回應 (可能觸發安全限制或 API 額度用罄)")
-                else:
-                    st.warning("未設定 Key")
+                        st.warning("未設定 Key")
 
-            with col2:
-                st.subheader("🟢 ChatGPT")
-                if openai_client:
-                    if chatgpt_result and "⚠️" in chatgpt_result:
-                        st.warning(chatgpt_result)
-                    elif chatgpt_result:
-                        st.success(chatgpt_result)
+                with col2:
+                    st.subheader("🟢 ChatGPT")
+                    if openai_client:
+                        if chatgpt_result and "⚠️" in chatgpt_result:
+                            st.warning(chatgpt_result)
+                        elif chatgpt_result:
+                            st.success(chatgpt_result)
+                        else:
+                            st.warning("無回應")
                     else:
-                        st.warning("無回應")
-                else:
-                    st.warning("未設定 Key")
+                        st.warning("未設定 Key")
     
     # --- 圖表顯示區 ---
     st.markdown("---")
