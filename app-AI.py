@@ -322,7 +322,8 @@ def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
 
 【市場現況】
 - 結算合約：{contract_code} (結算日: {settlement_date})
-- 現貨指數：約 {taiex_price}
+- 現貨指數（即時運算）：{taiex_price}
+  (請以此價格為目前的控盤基準，忽略過時數據)
 
 【任務】
 請根據 CSV 籌碼數據（OI 與 Amount），進行深度的控盤推演：
@@ -374,7 +375,8 @@ def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
 
 【市場現況】
 - 結算合約：{contract_code} (結算日: {settlement_date})
-- 現貨指數：約 {taiex_price}
+- 現貨指數（即時運算）：{taiex_price}
+  (請以此價格為目前的控盤基準，忽略過時數據)
 
 【任務】
 請根據 CSV 籌碼數據（OI 與 Amount），進行深度的控盤推演：
@@ -431,7 +433,7 @@ def main():
 
     with st.spinner("連線期交所中..."):
         df, data_date = get_option_data()
-        taiex_now = get_realtime_data()
+        auto_taiex = get_realtime_data() # 改名為 auto_taiex 以示區別
 
     if df is None:
         st.error("查無資料，請稍後再試。")
@@ -445,13 +447,42 @@ def main():
         "text/csv",
     )
 
+    # ==========================================
+    # 🆕 新增功能：手動校正現貨價格 (不破壞原版面，增加在數據列上方)
+    # ==========================================
+    with st.expander("🛠️ 數據校正設定 (若現貨/期貨價格延遲，請點此展開輸入)", expanded=False):
+        mc1, mc2 = st.columns([1, 2])
+        with mc1:
+            st.info(f"系統自動抓取: {auto_taiex}")
+        with mc2:
+            manual_price_input = st.number_input(
+                "請輸入看盤軟體最新價格 (輸入 0 代表使用系統自動數據):",
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+                format="%.2f"
+            )
+    
+    # --- 核心邏輯判定 ---
+    if manual_price_input > 0:
+        final_taiex = manual_price_input
+        price_source_msg = "⚠️ 手動校正"
+    else:
+        final_taiex = auto_taiex if auto_taiex else 0
+        price_source_msg = "系統自動"
+
+    # ==========================================
+
     total_call_amt = df[df["Type"].str.contains("買|Call", case=False, na=False)]["Amount"].sum()
     total_put_amt = df[df["Type"].str.contains("賣|Put", case=False, na=False)]["Amount"].sum()
     pc_ratio_amt = ((total_put_amt / total_call_amt) * 100 if total_call_amt > 0 else 0)
 
     c1, c2, c3, c4 = st.columns([1.2, 0.8, 1, 1])
     c1.markdown(f"<div style='text-align: left;'><span style='font-size: 14px; color: #555;'>製圖時間</span><br><span style='font-size: 18px; font-weight: bold;'>{datetime.now(tz=TW_TZ).strftime('%Y/%m/%d %H:%M:%S')}</span></div>", unsafe_allow_html=True)
-    c2.metric("大盤現貨", f"{int(taiex_now) if taiex_now else 'N/A'}")
+    
+    # 這裡使用 final_taiex 顯示
+    c2.metric(f"大盤/期貨 ({price_source_msg})", f"{int(final_taiex) if final_taiex else 'N/A'}")
+    
     trend = "偏多" if pc_ratio_amt > 100 else "偏空"
     c3.metric("全市場 P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}格局", delta_color="normal" if pc_ratio_amt > 100 else "inverse")
     c4.metric("資料來源日期", data_date)
@@ -509,22 +540,23 @@ def main():
     if st.button("🚀 啟動莊家思維推演", type="primary"):
         ai_col1, ai_col2 = st.columns(2)
 
+        # 注意：這裡傳入的是 final_taiex，確保 AI 吃到的是您校正後的價格
         with ai_col1:
             st.markdown(f"#### 💎 Gemini 莊家 ({gemini_model_name})")
             with st.spinner("Gemini 正在計算最大痛點..."):
-                gemini_advice = ask_gemini_brief(target_df_for_ai, taiex_now, target_code, target_date)
+                gemini_advice = ask_gemini_brief(target_df_for_ai, final_taiex, target_code, target_date)
             st.info(gemini_advice)
 
         with ai_col2:
             st.markdown(f"#### 💬 ChatGPT 莊家 ({openai_model_name})")
             with st.spinner("ChatGPT 正在擬定獵殺劇本..."):
-                openai_advice = ask_openai_brief(target_df_for_ai, taiex_now, target_code, target_date)
+                openai_advice = ask_openai_brief(target_df_for_ai, final_taiex, target_code, target_date)
             st.info(openai_advice)
 
     st.markdown("---")
 
     # ==========================================
-    # 圖表
+    # 圖表 (圖表中的基準線也使用 final_taiex)
     # ==========================================
     if plot_targets:
         cols = st.columns(len(plot_targets))
@@ -543,8 +575,9 @@ def main():
                     f"<br><span style='font-size: 14px;'>結算: {s_date}</span>"
                     f"<br><span style='font-size: 14px;'>P/C金額比: {sub_ratio:.1f}% ({'偏多' if sub_ratio > 100 else '偏空'})</span>"
                 )
-
-                st.plotly_chart(plot_tornado_chart(df_target, title_text, taiex_now), use_container_width=True)
+                
+                # 這裡傳入 final_taiex
+                st.plotly_chart(plot_tornado_chart(df_target, title_text, final_taiex), use_container_width=True)
     else:
         st.info("目前無可識別的未來結算合約。")
 
