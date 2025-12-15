@@ -1126,6 +1126,11 @@ def main():
         if not gemini_model and not openai_client:
             st.error("請至少設定一個 API Key")
         else:
+            # 確保有 plot_targets
+            if not plot_targets:
+                st.error("無法取得合約資訊")
+                return
+            
             # 🆕 整合所有數據
             data_str = prepare_ai_data(
                 df, 
@@ -1135,12 +1140,12 @@ def main():
                 futures_price,
                 taiex_now,
                 basis,
-                atm_iv,
-                risk_reversal,
-                gex_summary
+                atm_iv if 'atm_iv' in locals() else None,
+                risk_reversal if 'risk_reversal' in locals() else None,
+                gex_summary if 'gex_summary' in locals() else None
             )
             
-            contract_info = plot_targets[0]['info'] if plot_targets else None
+            contract_info = plot_targets[0]['info']
             prompt_text = build_ai_prompt(data_str, taiex_now, contract_info)
 
             with st.spinner("🤖 AI 正在計算最大痛點、Gamma 壓力與獵殺區間..."):
@@ -1148,13 +1153,17 @@ def main():
                 chatgpt_result = None
 
                 with ThreadPoolExecutor(max_workers=2) as executor:
-                    futures = {}
-                    if gemini_model: futures['gemini'] = executor.submit(ask_gemini, prompt_text)
-                    if openai_client: futures['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
+                    ai_futures = {}
+                    if gemini_model: 
+                        ai_futures['gemini'] = executor.submit(ask_gemini, prompt_text)
+                    if openai_client: 
+                        ai_futures['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
 
-                    for key, future in futures.items():
-                        if key == 'gemini': gemini_result = future.result()
-                        elif key == 'chatgpt': chatgpt_result = future.result()
+                    for key, future in ai_futures.items():
+                        if key == 'gemini': 
+                            gemini_result = future.result()
+                        elif key == 'chatgpt': 
+                            chatgpt_result = future.result()
 
             col1, col2 = st.columns(2)
             
