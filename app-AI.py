@@ -437,7 +437,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
             ticktext=[f"{int(x_limit*0.75)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.25)}", 
                      "0", f"{int(x_limit*0.25)}", f"{int(x_limit*0.5)}", f"{int(x_limit*0.75)}"]
         ),
-        yaxis=dict(title="履約價", tickmode="linear", dtick=100, tickformat="d"),
+        yaxis=dict(title="履約價", tickmode="linear", dtick=50, tickformat="d"),
         barmode="overlay",
         legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center"),
         height=750,
