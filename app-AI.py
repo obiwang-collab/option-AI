@@ -152,8 +152,6 @@ def get_market_context():
     except: pass
 
     # 3. 期貨價格 (如果抓不到就用現貨暫代)
-    # 這裡簡化，直接用 Spot 計算基差 (假設 Fut ~ Spot)
-    # 實務上 Yahoo WTX 常常抓不到，若需精確需接期貨商 API
     data["Fut"] = data["Spot"] # 預設
     
     return data
@@ -194,7 +192,7 @@ def get_option_data_history():
             return df
         except: return None
 
-    # 1. 找最近的一個交易日 (T) - 回溯 10 天避免連假/週一問題
+    # 1. 找最近的一個交易日 (T) - 回溯 10 天
     df_T, date_T = None, None
     for i in range(10):
         d = now - timedelta(days=i)
@@ -203,7 +201,8 @@ def get_option_data_history():
             date_T = d
             break
             
-    if df_T is None: return None, None, None
+    # 🔥 修正點：若抓不到資料，只回傳 2 個 None (之前回傳 3 個導致錯誤)
+    if df_T is None: return None, None 
 
     # 2. 找上一個交易日 (T-1)
     df_Prev = None
@@ -245,8 +244,6 @@ def calculate_quant_metrics(df, spot_price):
         _, gamma = quant.get_greeks(spot_price, K, T, use_iv)
         
         # GEX = Gamma * OI * Spot * 100
-        # Call GEX (Dealer Short Call -> Long Hedge -> Resistance -> Positive GEX in SpotGamma notation)
-        # Put GEX (Dealer Short Put -> Short Hedge -> Support/Accel -> Negative GEX)
         val = gamma * oi * spot_price * 100
         if 'Put' in cp or '賣' in cp: val = -val
         gex_list.append(val)
@@ -260,7 +257,6 @@ def calculate_quant_metrics(df, spot_price):
 # 📊 圖表繪製
 # ==========================================
 def plot_tornado_chart(df_target, title_text, spot_price):
-    # 這是您最愛的「莊家獵殺版」原版圖表
     is_call = df_target["Type"].str.contains("買|Call", case=False, na=False)
     df_call = df_target[is_call][["Strike", "OI", "Amount"]].rename(columns={"OI": "Call_OI", "Amount": "Call_Amt"})
     df_put = df_target[~is_call][["Strike", "OI", "Amount"]].rename(columns={"OI": "Put_OI", "Amount": "Put_Amt"})
@@ -320,7 +316,7 @@ def plot_quant_charts(df, spot_price):
     fig_change = go.Figure()
     fig_change.add_trace(go.Bar(x=df_c["Strike"], y=df_c["OI_Change"], name="Call Δ", marker_color="red"))
     fig_change.add_trace(go.Bar(x=df_p["Strike"], y=df_p["OI_Change"], name="Put Δ", marker_color="green"))
-    fig_change.update_layout(title="近 1 日 OI 籌碼變化", barmode='group', height=400)
+    fig_change.update_layout(title="近 1 日 OI 籌碼變化 (T vs T-1)", barmode='group', height=400)
     if spot_price > 0: fig_change.add_vline(x=spot_price, line_dash="dash", line_color="orange")
 
     return fig_gex, fig_change
@@ -345,6 +341,7 @@ def main():
 
     if df is None:
         st.error("❌ 查無選擇權資料 (可能為期交所連線限制)。")
+        st.warning("請稍後再試，或檢查 IP 是否被封鎖。")
         return
 
     csv = df.to_csv(index=False).encode("utf-8-sig")
