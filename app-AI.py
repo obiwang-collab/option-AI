@@ -963,6 +963,23 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"🔵 Gemini: {'✅' if gemini_model else '❌'}")
     st.sidebar.caption(f"🟢 ChatGPT: {'✅' if openai_client else '❌'}")
+    
+    # 🆕 側邊欄數據摘要
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📊 數據摘要")
+    
+    if inst_fut_position:
+        st.sidebar.markdown("**期貨淨部位**")
+        for key, value in inst_fut_position.items():
+            color = "🟢" if value > 0 else "🔴"
+            st.sidebar.caption(f"{color} {key}: {value:+,} 口")
+    
+    st.sidebar.markdown(f"**選擇權 P/C 比**: {pc_ratio_amt:.1f}%")
+    st.sidebar.caption(f"{'🟢 偏多格局' if pc_ratio_amt > 100 else '🔴 偏空格局'}")
+    
+    if basis:
+        st.sidebar.markdown(f"**基差**: {basis:+.1f}")
+        st.sidebar.caption(f"{'正價差 (多方)' if basis > 0 else '逆價差 (空方)'}")
 
     with st.spinner('🔄 連線期交所中...正在獲取完整數據...'):
         # 獲取所有數據
@@ -993,22 +1010,7 @@ def main():
     
     # 下載數據
     csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.sidebar.download_button("📥 下載完整數據", csv, f"option_{data_date.replace('/', '')}_full.csv", "text/csv")
-    
-    # 🆕 三大法人選擇權數據顯示
-    if inst_opt_today is not None and not inst_opt_today.empty:
-        with st.sidebar.expander("📊 三大法人選擇權籌碼", expanded=False):
-            st.caption(f"數據日期: {inst_opt_date_today}")
-            st.dataframe(inst_opt_today, use_container_width=True)
-            
-            inst_csv = inst_opt_today.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 下載法人選擇權數據", inst_csv, f"institutional_opt_{inst_opt_date_today.replace('/', '')}.csv", "text/csv")
-    
-    # 🆕 三大法人期貨數據顯示
-    if inst_fut_position:
-        with st.sidebar.expander("📈 三大法人期貨淨部位", expanded=False):
-            for key, value in inst_fut_position.items():
-                st.metric(key, f"{value:+,} 口")
+    st.sidebar.download_button("📥 下載完整選擇權數據", csv, f"option_{data_date.replace('/', '')}_full.csv", "text/csv")
     
     # 主要指標顯示
     c1, c2, c3, c4, c5 = st.columns([1, 0.8, 1, 0.8, 1])
@@ -1019,6 +1021,139 @@ def main():
     trend = "偏多" if pc_ratio_amt > 100 else "偏空"
     c5.metric("P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}", delta_color="normal" if pc_ratio_amt > 100 else "inverse")
 
+    st.markdown("---")
+    
+    # 🆕 顯示三大法人期貨部位
+    st.markdown("### 📈 三大法人期貨淨部位")
+    if inst_fut_position:
+        col_fut1, col_fut2, col_fut3, col_fut4 = st.columns(4)
+        
+        with col_fut1:
+            if '外資' in inst_fut_position:
+                foreign_pos = inst_fut_position['外資']
+                st.metric(
+                    "外資",
+                    f"{foreign_pos:+,} 口",
+                    delta="多方主導" if foreign_pos > 0 else "空方主導",
+                    delta_color="normal" if foreign_pos > 0 else "inverse"
+                )
+            else:
+                st.metric("外資", "N/A")
+        
+        with col_fut2:
+            if '自營商' in inst_fut_position:
+                dealer_pos = inst_fut_position['自營商']
+                st.metric(
+                    "自營商",
+                    f"{dealer_pos:+,} 口",
+                    delta="多方" if dealer_pos > 0 else "空方",
+                    delta_color="normal" if dealer_pos > 0 else "inverse"
+                )
+            else:
+                st.metric("自營商", "N/A")
+        
+        with col_fut3:
+            if '投信' in inst_fut_position:
+                trust_pos = inst_fut_position['投信']
+                st.metric(
+                    "投信",
+                    f"{trust_pos:+,} 口",
+                    delta="多方" if trust_pos > 0 else "空方",
+                    delta_color="normal" if trust_pos > 0 else "inverse"
+                )
+            else:
+                st.metric("投信", "N/A")
+        
+        with col_fut4:
+            if inst_fut_position:
+                total_inst = sum(inst_fut_position.values())
+                st.metric(
+                    "三大法人合計",
+                    f"{total_inst:+,} 口",
+                    delta="多方合力" if total_inst > 0 else "空方合力",
+                    delta_color="normal" if total_inst > 0 else "inverse"
+                )
+    else:
+        st.info("📊 三大法人期貨數據讀取中...")
+    
+    st.markdown("---")
+    
+    # 🆕 顯示三大法人選擇權籌碼
+    st.markdown("### 🎯 三大法人選擇權籌碼")
+    
+    if inst_opt_today is not None and not inst_opt_today.empty:
+        st.markdown(f"**數據日期：{inst_opt_date_today}**")
+        
+        # 顯示完整表格
+        st.dataframe(inst_opt_today, use_container_width=True, height=200)
+        
+        # 提供下載
+        inst_csv = inst_opt_today.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            "📥 下載三大法人選擇權數據",
+            inst_csv,
+            f"institutional_option_{inst_opt_date_today.replace('/', '')}.csv",
+            "text/csv"
+        )
+        
+        # 🆕 如果有前一日數據，顯示變化
+        if inst_opt_yesterday is not None and not inst_opt_yesterday.empty:
+            with st.expander(f"📊 查看前一日數據對比 ({inst_opt_date_yesterday})", expanded=False):
+                st.dataframe(inst_opt_yesterday, use_container_width=True, height=200)
+    else:
+        st.info("📊 三大法人選擇權數據讀取中...")
+    
+    st.markdown("---")
+    
+    # 🆕 散戶 vs 法人籌碼對比（從選擇權 OI 推算）
+    st.markdown("### 👥 市場籌碼結構分析")
+    
+    col_structure1, col_structure2 = st.columns(2)
+    
+    with col_structure1:
+        st.markdown("#### 📊 全市場選擇權金額分布")
+        call_total = total_call_amt / 100000000
+        put_total = total_put_amt / 100000000
+        
+        fig_market = go.Figure(data=[
+            go.Bar(
+                name='Call 權利金',
+                x=['Call'],
+                y=[call_total],
+                marker_color='#d62728',
+                text=[f'{call_total:.1f}億'],
+                textposition='auto',
+            ),
+            go.Bar(
+                name='Put 權利金',
+                x=['Put'],
+                y=[put_total],
+                marker_color='#2ca02c',
+                text=[f'{put_total:.1f}億'],
+                textposition='auto',
+            )
+        ])
+        
+        fig_market.update_layout(
+            title="Call vs Put 權利金對比",
+            yaxis_title="金額（億元）",
+            height=300,
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig_market, use_container_width=True)
+    
+    with col_structure2:
+        st.markdown("#### 📈 選擇權 OI 前 10 大履約價")
+        
+        # 計算前 10 大 OI
+        df_top10 = df.nlargest(10, 'Amount')[['Strike', 'Type', 'OI', 'Amount']]
+        df_top10['Amount_億'] = (df_top10['Amount'] / 100000000).round(2)
+        df_top10_display = df_top10[['Strike', 'Type', 'OI', 'Amount_億']].copy()
+        df_top10_display.columns = ['履約價', '類型', 'OI (口)', '金額 (億)']
+        
+        st.dataframe(df_top10_display, use_container_width=True, height=300)
+    
     st.markdown("---")
     
     # 🆕 計算進階指標（IV, GEX 等）
