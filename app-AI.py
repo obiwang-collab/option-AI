@@ -12,6 +12,10 @@ from openai import OpenAI
 import streamlit.components.v1 as components
 import numpy as np
 from scipy.stats import norm
+import urllib3
+
+# 忽略 SSL 警告 (必要)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 頁面設定 ---
 st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (莊家控盤版)")
@@ -94,18 +98,16 @@ def get_realtime_data():
     taiex = None
     ts = int(time.time())
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # 1. TWSE MIS
     try:
         url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw&json=1&delay=0&_={ts}000"
         res = requests.get(url, timeout=2)
         data = res.json()
         if 'msgArray' in data and len(data['msgArray']) > 0:
             val = data['msgArray'][0].get('z', '-')
-            if val == '-': val = data['msgArray'][0].get('o', '-') # 若無成交用開盤
-            if val == '-': val = data['msgArray'][0].get('y', '-') # 若無開盤用昨收
+            if val == '-': val = data['msgArray'][0].get('o', '-')
+            if val == '-': val = data['msgArray'][0].get('y', '-')
             if val != '-': taiex = float(val)
     except: pass
-    # 2. Yahoo Finance (Backup)
     if taiex is None:
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/%5ETWII?interval=1m&range=1d&_={ts}"
@@ -116,55 +118,47 @@ def get_realtime_data():
         except: pass
     return taiex
 
-# --- 🔥 (修改版) 獲取期貨行情 - 強制回溯 ---
+# --- 🔥 (修正版) 獲取期貨行情 ---
 @st.cache_data(ttl=300)
 def get_futures_data():
-    """獲取台指期貨價格 (自動回溯直到抓到數據)"""
+    """獲取台指期貨價格 (自動回溯)"""
     url = "https://www.taifex.com.tw/cht/3/futContractsDate"
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    # 嘗試回溯 14 天
     for i in range(14):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
+        if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
         
-        # 簡單過濾：如果是今天且未過 15:00，期交所日報表還沒出來，跳過
-        if i == 0 and datetime.now(tz=TW_TZ).hour < 15:
-            continue
-            
         query_date = target_date.strftime('%Y/%m/%d')
+        # commodity_id=TX 代表大台
         payload = {'queryType': '1', 'marketCode': '0', 'commodity_id': 'TX', 'queryDate': query_date}
         
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5)
+            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
             if "查無資料" in res.text: continue
             
             dfs = pd.read_html(StringIO(res.text))
             if not dfs: continue
             df = dfs[0]
-            if len(df) > 0:
-                futures_price = None
-                volume = None
-                for col in df.columns:
-                    if '收盤價' in str(col) or '成交價' in str(col):
-                        try: futures_price = float(str(df.iloc[0][col]).replace(',', ''))
-                        except: pass
-                    if '成交量' in str(col):
-                        try: volume = int(str(df.iloc[0][col]).replace(',', ''))
-                        except: pass
-                
-                # 只要抓到價格就算成功
-                if futures_price:
-                    return futures_price, volume, query_date
+            
+            futures_price = None
+            for col in df.columns:
+                if '收盤價' in str(col) or '成交價' in str(col):
+                    try: futures_price = float(str(df.iloc[0][col]).replace(',', ''))
+                    except: pass
+            
+            if futures_price: return futures_price, None, query_date
         except: pass
     
     return None, None, "N/A"
 
-# --- 🔥 (修改版) 三大法人期貨 - 強制回溯 ---
+# --- 🔥 (修正版) 三大法人期貨 - 改用 HTML 檢視網址 ---
 @st.cache_data(ttl=300)
 def get_institutional_futures_position():
-    """獲取法人期貨淨部位 (自動回溯)"""
-    url = "https://www.taifex.com.tw/cht/3/futContractsDateDown"
+    """獲取法人期貨淨部位 (HTML Parsing)"""
+    # 這是「區分各期貨契約」的網頁，可以用 queryType=1 區分身分
+    url = "https://www.taifex.com.tw/cht/3/futContractsDate"
     headers = {'User-Agent': 'Mozilla/5.0'}
     
     for i in range(14):
@@ -172,10 +166,11 @@ def get_institutional_futures_position():
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue 
         
         query_date = target_date.strftime('%Y/%m/%d')
-        payload = {'down_type': '1', 'queryStartDate': query_date, 'queryEndDate': query_date, 'commodity_id': 'TX'}
+        # queryType=1 是重點，這樣才會顯示「三大法人」
+        payload = {'queryType': '1', 'goDay': '', 'doDay': '', 'queryDate': query_date, 'commodityId': 'TXF'}
         
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5)
+            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
             if "查無資料" in res.text or len(res.text) < 500: continue
             
@@ -183,20 +178,31 @@ def get_institutional_futures_position():
             if not dfs: continue
             df = dfs[0]
             
+            # 尋找含有 "身分" 或 "身份" 的欄位
             inst_data = {}
-            for idx, row in df.iterrows():
-                row_str = str(row.iloc[0])
-                # 尋找關鍵字
-                targets = ['外資', '自營商', '投信']
-                for t in targets:
-                    if t in row_str:
-                        for col in df.columns:
-                            if '買賣差額' in str(col) or '淨額' in str(col):
-                                try: inst_data[t] = int(str(row[col]).replace(',', ''))
-                                except: pass
-                                break
+            # 期交所 HTML 表格很亂，通常第 3 欄是身分別，最後幾欄是多空淨額
+            # 我們直接用字串搜尋法最穩
             
-            # 只要有抓到任一法人數據就算成功
+            # 轉成字串搜尋
+            for idx, row in df.iterrows():
+                row_str = " ".join([str(x) for x in row.values])
+                
+                # 抓取數值 (取最後一個出現的數字，通常是多空淨額)
+                def extract_net(r):
+                    # 假設表格最後一欄是「未平倉淨額」
+                    try: return int(str(r.iloc[-1]).replace(',', ''))
+                    except: 
+                        # 有時候倒數第二欄才是，嘗試 failover
+                        try: return int(str(r.iloc[-2]).replace(',', ''))
+                        except: return 0
+
+                if '外資' in row_str:
+                    inst_data['外資'] = extract_net(row)
+                elif '投信' in row_str:
+                    inst_data['投信'] = extract_net(row)
+                elif '自營商' in row_str:
+                    inst_data['自營商'] = extract_net(row)
+            
             if inst_data:
                 inst_data['date'] = query_date
                 return inst_data
@@ -204,24 +210,25 @@ def get_institutional_futures_position():
 
     return None
 
-# --- 🔥 (修改版) 三大法人選擇權 - 強制回溯 ---
+# --- 🔥 (修正版) 三大法人選擇權 - 改用 callsAndPutsDate ---
 @st.cache_data(ttl=300)
 def get_institutional_option_data():
-    """獲取法人選擇權數據 (自動回溯，需抓兩天)"""
-    url = "https://www.taifex.com.tw/cht/3/futContractsDateDown"
+    """獲取法人選擇權數據 (HTML Parsing)"""
+    # 這是「區分買賣權」的法人網頁
+    url = "https://www.taifex.com.tw/cht/3/callsAndPutsDate"
     headers = {'User-Agent': 'Mozilla/5.0'}
     all_inst_data = []
     
-    # 嘗試回溯 20 天以確保抓到兩天數據
     for i in range(20):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
         
         query_date = target_date.strftime('%Y/%m/%d')
-        payload = {'down_type': '1', 'queryStartDate': query_date, 'queryEndDate': query_date, 'commodity_id': 'TXO'}
+        # queryType=1: 依身分別, commodityId=TXO
+        payload = {'queryType': '1', 'goDay': '', 'doDay': '', 'queryDate': query_date, 'commodityId': 'TXO'}
         
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5)
+            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
             if "查無資料" in res.text or len(res.text) < 500: continue
             
@@ -229,28 +236,25 @@ def get_institutional_option_data():
             if not dfs: continue
             df = dfs[0]
             
-            df.columns = [str(c).strip().replace(' ', '').replace('\n', '') for c in df.columns]
+            # 簡單清理
             df_filtered = df[df.iloc[:, 0].astype(str).str.contains('自營商|投信|外資', na=False)]
             
             if not df_filtered.empty:
                 all_inst_data.append({'date': query_date, 'df': df_filtered})
-                if len(all_inst_data) >= 2: break # 抓到兩天就停
+                if len(all_inst_data) >= 2: break
         except: pass
     
     if len(all_inst_data) < 1: return None, None, None, None
     
-    # 處理抓到 1 天或 2 天的情況
     today_df = all_inst_data[0]['df']
     today_date = all_inst_data[0]['date']
-    yesterday_df = all_inst_data[1]['df'] if len(all_inst_data) > 1 else None
-    yesterday_date = all_inst_data[1]['date'] if len(all_inst_data) > 1 else None
+    prev_df = all_inst_data[1]['df'] if len(all_inst_data) > 1 else None
     
-    return today_df, today_date, yesterday_df, yesterday_date
+    return today_df, today_date, prev_df, None
 
-# --- 🔥 (修改版) 選擇權全履約價 - 強制回溯 ---
+# --- (修正版) 選擇權全履約價 - 保持原樣但確保回溯 ---
 @st.cache_data(ttl=300)
 def get_option_data_multi_days(days=3):
-    """獲取選擇權數據 (自動回溯)"""
     url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
     headers = {'User-Agent': 'Mozilla/5.0'}
     all_data = []
@@ -258,65 +262,41 @@ def get_option_data_multi_days(days=3):
     for i in range(20):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
-
         query_date = target_date.strftime('%Y/%m/%d')
-        payload = {
-            'queryType': '2', 'marketCode': '0', 'commodity_id': 'TXO', 
-            'queryDate': query_date, 'MarketCode': '0', 'commodity_idt': 'TXO'
-        }
-        
+        payload = {'queryType': '2', 'marketCode': '0', 'commodity_id': 'TXO', 'queryDate': query_date, 'MarketCode': '0', 'commodity_idt': 'TXO'}
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5)
+            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
             if "查無資料" in res.text or len(res.text) < 500: continue
-            
             dfs = pd.read_html(StringIO(res.text))
             df = dfs[0]
-            
-            # 欄位清洗
             df.columns = [str(c).replace(' ', '').replace('*', '').replace('契約', '').strip() for c in df.columns]
-            col_map = {
-                'Month': next((c for c in df.columns if '月' in c or '週' in c), None),
-                'Strike': next((c for c in df.columns if '履約' in c), None),
-                'Type': next((c for c in df.columns if '買賣' in c), None),
-                'OI': next((c for c in df.columns if '未沖銷' in c or 'OI' in c), None),
-                'Price': next((c for c in df.columns if '結算' in c or '收盤' in c or 'Price' in c), None)
-            }
+            col_map = {'Month': next((c for c in df.columns if '月' in c or '週' in c), None), 'Strike': next((c for c in df.columns if '履約' in c), None), 'Type': next((c for c in df.columns if '買賣' in c), None), 'OI': next((c for c in df.columns if '未沖銷' in c or 'OI' in c), None), 'Price': next((c for c in df.columns if '結算' in c or '收盤' in c or 'Price' in c), None)}
             if not all(col_map.values()): continue
-            
-            df = df.rename(columns={k:v for k,v in col_map.items() if v})
-            df = df[['Month', 'Strike', 'Type', 'OI', 'Price']].dropna(subset=['Type'])
-            
+            df = df.rename(columns={k:v for k,v in col_map.items() if v})[['Month', 'Strike', 'Type', 'OI', 'Price']].dropna(subset=['Type'])
             df['Type'] = df['Type'].astype(str).str.strip()
             df['Strike'] = pd.to_numeric(df['Strike'].astype(str).str.replace(',', ''), errors='coerce')
             df['OI'] = pd.to_numeric(df['OI'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             df['Price'] = pd.to_numeric(df['Price'].astype(str).str.replace(',', '').replace('-', '0'), errors='coerce').fillna(0)
             df['Amount'] = df['OI'] * df['Price'] * 50
-            
             if df['OI'].sum() > 0:
                 all_data.append({'date': query_date, 'df': df})
                 if len(all_data) >= days: break
         except: continue
-    
-    return all_data if len(all_data) >= 1 else None # 至少回傳一天
+    return all_data if len(all_data) >= 1 else None
 
 # --- 數學計算 (IV, Greeks, GEX) ---
 def calculate_iv(option_price, spot_price, strike, time_to_expiry, option_type='call', risk_free_rate=0.015):
     if option_price <= 0 or spot_price <= 0 or strike <= 0 or time_to_expiry <= 0: return None
     sigma = 0.3
-    for i in range(50): # 減少迭代次數加快速度
+    for i in range(50):
         d1 = (np.log(spot_price / strike) + (risk_free_rate + 0.5 * sigma ** 2) * time_to_expiry) / (sigma * np.sqrt(time_to_expiry))
         d2 = d1 - sigma * np.sqrt(time_to_expiry)
-        if option_type == 'call':
-            price = spot_price * norm.cdf(d1) - strike * np.exp(-risk_free_rate * time_to_expiry) * norm.cdf(d2)
-            vega = spot_price * norm.pdf(d1) * np.sqrt(time_to_expiry)
-        else:
-            price = strike * np.exp(-risk_free_rate * time_to_expiry) * norm.cdf(-d2) - spot_price * norm.cdf(-d1)
-            vega = spot_price * norm.pdf(d1) * np.sqrt(time_to_expiry)
-        diff = price - option_price
-        if abs(diff) < 1e-4: return sigma
-        if vega == 0: return None
-        sigma = sigma - diff / vega
+        if option_type == 'call': price = spot_price * norm.cdf(d1) - strike * np.exp(-risk_free_rate * time_to_expiry) * norm.cdf(d2)
+        else: price = strike * np.exp(-risk_free_rate * time_to_expiry) * norm.cdf(-d2) - spot_price * norm.cdf(-d1)
+        vega = spot_price * norm.pdf(d1) * np.sqrt(time_to_expiry)
+        if vega == 0 or abs(price - option_price) < 1e-4: return sigma
+        sigma -= (price - option_price) / vega
         if sigma <= 0: return None
     return None
 
@@ -348,8 +328,7 @@ def calculate_dealer_gex(df, spot_price, settlement_date):
                     if gamma:
                         gex = -gamma * oi * (spot_price ** 2) * 0.01
                         gex_data.append({'Strike': strike, 'Type': option_type, 'OI': oi, 'Gamma': gamma, 'GEX': gex})
-        if gex_data:
-            return pd.DataFrame(gex_data).groupby('Strike')['GEX'].sum().reset_index()
+        if gex_data: return pd.DataFrame(gex_data).groupby('Strike')['GEX'].sum().reset_index()
     except: pass
     return None
 
@@ -405,11 +384,9 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     max_oi = max(data['Put_OI'].max(), data['Call_OI'].max()) if not data.empty else 1000
     x_limit = max_oi * 1.1
 
-    # 處理 OI 變化文字
     data['Put_Text'] = ""
     data['Call_Text'] = ""
     if 'OI_Change_D1' in df_target.columns:
-        # 簡易合併邏輯
         df_chg = df_target[['Strike', 'Type', 'OI_Change_D1']].copy()
         call_c = df_chg[df_chg['Type'].str.contains('Call|買')].set_index('Strike')['OI_Change_D1']
         put_c = df_chg[~df_chg['Type'].str.contains('Call|買')].set_index('Strike')['OI_Change_D1']
@@ -421,11 +398,9 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig = go.Figure()
     fig.add_trace(go.Bar(y=data['Strike'], x=-data['Put_OI'], orientation='h', name='Put (支撐)', marker_color='#2ca02c', opacity=0.85, text=data['Put_Text'], textposition='outside', hovertemplate='Put OI: %{x}<br>Amt: %{customdata:.2f}億', customdata=data['Put_Amt']/1e8))
     fig.add_trace(go.Bar(y=data['Strike'], x=data['Call_OI'], orientation='h', name='Call (壓力)', marker_color='#d62728', opacity=0.85, text=data['Call_Text'], textposition='outside', hovertemplate='Call OI: %{x}<br>Amt: %{customdata:.2f}億', customdata=data['Call_Amt']/1e8))
-    
     if spot_price:
         fig.add_hline(y=spot_price, line_dash="dash", line_color="#ff7f0e", line_width=2)
         fig.add_annotation(x=1.05, y=spot_price, text=f"現貨 {int(spot_price)}", showarrow=False, bgcolor="#ff7f0e", font=dict(color="white"))
-        
     fig.update_layout(title=dict(text=title_text, x=0.5), xaxis=dict(range=[-x_limit, x_limit]), barmode='overlay', height=750)
     return fig
 
