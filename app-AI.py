@@ -145,7 +145,7 @@ def get_option_data_full(days_back=3):
     headers = {"User-Agent": "Mozilla/5.0"}
     all_data = []
     
-    for i in range(days_back + 5):  # 多抓幾天確保有資料
+    for i in range(days_back + 5):
         query_date = (datetime.now(tz=TW_TZ) - timedelta(days=i)).strftime("%Y/%m/%d")
         payload = {
             "queryType": "2", "marketCode": "0", "dateaddcnt": "",
@@ -209,7 +209,6 @@ def calculate_oi_changes(data_list):
     df_yesterday = data_list[1].copy() if len(data_list) > 1 else None
     df_2days = data_list[2].copy() if len(data_list) > 2 else None
     
-    # 合併資料計算變化
     df_today['OI_Today'] = df_today['OI']
     changes = df_today[['Month', 'Strike', 'Type', 'OI_Today']].copy()
     
@@ -243,28 +242,24 @@ def calculate_iv_and_skew(df, spot_price):
     if spot_price is None or spot_price <= 0:
         return None
     
-    # 找出最接近ATM的履約價
     df_sorted = df.copy()
     df_sorted['Distance'] = abs(df_sorted['Strike'] - spot_price)
     atm_strike = df_sorted.loc[df_sorted['Distance'].idxmin(), 'Strike']
     
-    # 取ATM附近±200點的資料
     df_atm = df_sorted[
         (df_sorted['Strike'] >= atm_strike - 200) & 
         (df_sorted['Strike'] <= atm_strike + 200)
     ].copy()
     
-    # 簡化IV計算（使用價格反推，實務應用BS公式）
-    df_atm['IV_Approx'] = df_atm['Price'] / (spot_price * 0.01)  # 簡化公式
+    df_atm['IV_Approx'] = df_atm['Price'] / (spot_price * 0.01)
     
-    # 計算25Δ Call/Put的Strike（簡化版）
     call_25d = df_atm[df_atm['Type'].str.contains('Call|買', case=False)].nlargest(5, 'OI')
     put_25d = df_atm[df_atm['Type'].str.contains('Put|賣', case=False)].nlargest(5, 'OI')
     
     iv_call_25d = call_25d['IV_Approx'].mean() if not call_25d.empty else 0
     iv_put_25d = put_25d['IV_Approx'].mean() if not put_25d.empty else 0
     
-    skew = iv_call_25d - iv_put_25d  # Risk Reversal
+    skew = iv_call_25d - iv_put_25d
     
     return {
         'ATM_Strike': atm_strike,
@@ -283,7 +278,6 @@ def get_futures_and_institutional():
     headers = {"User-Agent": "Mozilla/5.0"}
     result = {'futures_price': None, 'basis': None, 'foreign_net': None}
     
-    # 1. 期貨價格
     try:
         url = "https://www.taifex.com.tw/cht/3/futDailyMarketReport"
         today = datetime.now(tz=TW_TZ).strftime("%Y/%m/%d")
@@ -295,7 +289,6 @@ def get_futures_and_institutional():
         dfs = pd.read_html(StringIO(res.text))
         if dfs:
             df_fut = dfs[0]
-            # 找收盤價欄位
             price_col = next((c for c in df_fut.columns if "結算" in str(c) or "收盤" in str(c)), None)
             if price_col:
                 price_str = str(df_fut[price_col].iloc[0]).replace(",", "")
@@ -303,14 +296,12 @@ def get_futures_and_institutional():
     except Exception:
         pass
     
-    # 2. 外資部位（三大法人）
     try:
         url = "https://www.taifex.com.tw/cht/3/futContractsDateDown"
         res = requests.post(url, data=payload, headers=headers, timeout=5)
         dfs = pd.read_html(StringIO(res.text))
         if dfs and len(dfs) > 1:
-            df_inst = dfs[1]  # 通常在第二個表格
-            # 找外資淨額欄位
+            df_inst = dfs[1]
             for col in df_inst.columns:
                 if "外資" in str(col) and "淨額" in str(col):
                     net_str = str(df_inst[col].iloc[0]).replace(",", "")
@@ -332,25 +323,19 @@ def calculate_dealer_gamma(df, spot_price, risk_free_rate=0.015, days_to_expiry=
     df_calc = df.copy()
     df_calc = df_calc[df_calc['OI'] > 0]
     
-    # 簡化的 Delta & Gamma 計算（標準BS公式需要更多參數）
     S = spot_price
     K = df_calc['Strike'].values
     T = days_to_expiry / 365
-    sigma = 0.15  # 假設波動率15%（實務應從市場IV取得）
+    sigma = 0.15
     r = risk_free_rate
     
-    # Black-Scholes Delta (簡化版)
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     
-    # Call Delta
     delta_call = norm.cdf(d1)
-    # Put Delta  
     delta_put = delta_call - 1
     
-    # Gamma (Call & Put相同)
     gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
     
-    # 根據Type分配Delta
     df_calc['Delta'] = np.where(
         df_calc['Type'].str.contains('Call|買', case=False),
         delta_call,
@@ -358,10 +343,8 @@ def calculate_dealer_gamma(df, spot_price, risk_free_rate=0.015, days_to_expiry=
     )
     df_calc['Gamma'] = gamma
     
-    # Dealer Gamma Exposure = OI × Gamma × 50 (每口50倍)
     df_calc['Gamma_Exposure'] = df_calc['OI'] * df_calc['Gamma'] * 50
     
-    # 按履約價聚合
     gamma_profile = df_calc.groupby('Strike').agg({
         'Gamma_Exposure': 'sum',
         'Delta': 'mean'
@@ -371,7 +354,6 @@ def calculate_dealer_gamma(df, spot_price, risk_free_rate=0.015, days_to_expiry=
 
 # --- Tornado 圖 (移除OI過濾) ---
 def plot_tornado_chart(df_target, title_text, spot_price):
-    # 🔧 關鍵修改：移除 OI > 300 的過濾條件
     is_call = df_target["Type"].str.contains("買|Call", case=False, na=False)
     df_call = df_target[is_call][["Strike", "OI", "Amount"]].rename(
         columns={"OI": "Call_OI", "Amount": "Call_Amt"}
@@ -388,7 +370,6 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     total_put_money = data["Put_Amt"].sum()
     total_call_money = data["Call_Amt"].sum()
     
-    # 聚焦範圍
     FOCUS_RANGE = 1200
     if spot_price and spot_price > 0:
         center_price = spot_price
@@ -467,7 +448,7 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     )
     return fig
 
-# --- AI 分析函式保持不變 ---
+# --- AI 分析函式 ---
 def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
     if not gemini_model:
         return f"⚠️ {gemini_model_name}"
@@ -477,6 +458,42 @@ def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
             df_ai = df_ai.nlargest(80, "Amount")
         data_str = df_ai.to_csv(index=False)
         prompt = f"""
+你現在是台指選擇權市場的【主力莊家】。你的目標只有一個:**在結算日吃掉最多散戶的權利金,讓自己的利潤最大化**。
+
+【市場現況】
+- 結算合約:{contract_code} (結算日: {settlement_date})
+- 現貨指數(即時運算):{taiex_price}
+
+【任務】
+請根據 CSV 籌碼數據(OI 與 Amount),進行深度的控盤推演:
+1. **肥羊與雷區分析**: 散戶在哪個價位重倉?那是你的絕殺目標。你的防守底線在哪?
+2. **操盤劇本 (Script)**: 請寫出未來幾天的「畫線」劇本。
+3. **最佳結算目標**: 給出一個具體的「點位」或「窄區間」。
+4. **莊家指令**: 給出簡短有力的指令。
+
+【回答要求】
+- 使用第一人稱(本莊、我)。
+- 語氣:**自信、冷血、貪婪**。
+- **不要**給出任何風險警語或教育性廢話。
+- 分析要詳細,字數約 300-500 字。
+
+數據:
+{data_str}
+"""
+        response = gemini_model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"分析忙碌中 ({str(e)})"
+
+def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
+    if not openai_client:
+        return f"⚠️ {openai_model_name}"
+    try:
+        df_ai = df_recent.copy()
+        if "Amount" in df_ai.columns:
+            df_ai = df_ai.nlargest(80, "Amount")
+        data_str = df_ai.to_csv(index=False)
+        user_prompt = f"""
 你現在是台指選擇權市場的【主力莊家】。你的目標只有一個:**在結算日吃掉最多散戶的權利金,讓自己的利潤最大化**。
 
 【市場現況】
@@ -531,9 +548,8 @@ def main():
         st.error("查無資料,請稍後再試。")
         return
 
-    df = data_list[0]  # 最新一天的資料
+    df = data_list[0]
 
-    # 🔧 手動校正現貨價格
     with st.expander("🛠️ 數據校正設定 (若現貨/期貨價格延遲,請點此展開輸入)", expanded=False):
         mc1, mc2 = st.columns([1, 2])
         with mc1:
@@ -551,14 +567,10 @@ def main():
         final_taiex = auto_taiex if auto_taiex else 0
         price_source_msg = "系統自動"
 
-    # 計算 P/C Ratio
     total_call_amt = df[df["Type"].str.contains("買|Call", case=False, na=False)]["Amount"].sum()
     total_put_amt = df[df["Type"].str.contains("賣|Put", case=False, na=False)]["Amount"].sum()
     pc_ratio_amt = ((total_put_amt / total_call_amt) * 100 if total_call_amt > 0 else 0)
 
-    # ==========================================
-    # 📊 儀表板頂部資訊
-    # ==========================================
     c1, c2, c3, c4, c5 = st.columns([1, 0.8, 1, 1, 1])
     c1.markdown(f"<div style='text-align: left;'><span style='font-size: 14px; color: #555;'>製圖時間</span><br><span style='font-size: 18px; font-weight: bold;'>{datetime.now(tz=TW_TZ).strftime('%Y/%m/%d %H:%M:%S')}</span></div>", unsafe_allow_html=True)
     c2.metric(f"大盤/期貨 ({price_source_msg})", f"{int(final_taiex) if final_taiex else 'N/A'}")
@@ -567,7 +579,6 @@ def main():
     c3.metric("全市場 P/C 金額比", f"{pc_ratio_amt:.1f}%", f"{trend}格局")
     c4.metric("資料來源日期", data_date)
     
-    # 🆕 顯示期貨基差
     if futures_data['futures_price'] and final_taiex:
         basis = futures_data['futures_price'] - final_taiex
         c5.metric("現期基差", f"{basis:.1f}", f"期貨 {futures_data['futures_price']:.0f}")
@@ -576,14 +587,10 @@ def main():
 
     st.markdown("---")
 
-    # ==========================================
-    # 🆕 功能區塊 1: OI 增減熱圖
-    # ==========================================
     with st.expander("📈 近三日 OI 增減分析", expanded=False):
         if len(data_list) >= 2:
             oi_changes = calculate_oi_changes(data_list)
             if oi_changes is not None and 'Change_1D' in oi_changes.columns:
-                # 找出變化最大的前10名
                 top_increase = oi_changes.nlargest(10, 'Change_1D')[['Month', 'Strike', 'Type', 'Change_1D']]
                 top_decrease = oi_changes.nsmallest(10, 'Change_1D')[['Month', 'Strike', 'Type', 'Change_1D']]
                 
@@ -597,9 +604,6 @@ def main():
         else:
             st.warning("歷史資料不足,無法計算OI變化")
 
-    # ==========================================
-    # 🆕 功能區塊 2: IV & Skew 儀表板
-    # ==========================================
     with st.expander("📊 隱含波動率 (IV) & Skew 分析", expanded=False):
         iv_metrics = calculate_iv_and_skew(df, final_taiex)
         if iv_metrics:
@@ -613,9 +617,6 @@ def main():
         else:
             st.warning("無法計算 IV,請確認現貨價格正確")
 
-    # ==========================================
-    # 🆕 功能區塊 3: 外資部位 & 基差
-    # ==========================================
     with st.expander("🏦 三大法人部位 & 現期基差", expanded=False):
         fc1, fc2, fc3 = st.columns(3)
         
@@ -638,13 +639,9 @@ def main():
         
         st.info("💡 **基差解讀**: 正值代表期貨溢價(多頭),負值代表期貨貼水(空頭)")
 
-    # ==========================================
-    # 🆕 功能區塊 4: Dealer Gamma Exposure
-    # ==========================================
     with st.expander("⚡ 造市商 Gamma 曝險分析", expanded=False):
         gamma_profile = calculate_dealer_gamma(df, final_taiex)
         if gamma_profile is not None and not gamma_profile.empty:
-            # 繪製 Gamma Profile
             fig_gamma = go.Figure()
             fig_gamma.add_trace(go.Bar(
                 x=gamma_profile['Strike'],
@@ -660,7 +657,6 @@ def main():
             )
             st.plotly_chart(fig_gamma, use_container_width=True)
             
-            # 顯示最大Gamma點位
             max_gamma_strike = gamma_profile.loc[gamma_profile['Gamma_Exposure'].idxmax(), 'Strike']
             st.success(f"🎯 **最大 Gamma 點位**: {max_gamma_strike:.0f} (造市商需大量避險的價位)")
         else:
@@ -668,12 +664,8 @@ def main():
 
     st.markdown("---")
 
-    # ==========================================
-    # 💡 雙 AI 分析區塊
-    # ==========================================
     st.markdown("### 💡 雙 AI 莊家控盤室")
 
-    # 選出最近結算合約
     unique_codes = df["Month"].unique()
     all_contracts = []
     for code in unique_codes:
@@ -716,9 +708,6 @@ def main():
 
     st.markdown("---")
 
-    # ==========================================
-    # 📊 Tornado 圖表區
-    # ==========================================
     if all_contracts:
         plot_targets = []
         nearest = all_contracts[0]
@@ -748,7 +737,6 @@ def main():
     else:
         st.info("目前無可識別的未來結算合約。")
 
-    # 下載按鈕
     csv = df.to_csv(index=False).encode("utf-8-sig")
     st.sidebar.download_button(
         "📥 下載完整數據",
@@ -758,40 +746,4 @@ def main():
     )
 
 if __name__ == "__main__":
-    main()廢話。
-- 分析要詳細,字數約 300-500 字。
-
-數據:
-{data_str}
-"""
-        response = gemini_model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"分析忙碌中 ({str(e)})"
-
-def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
-    if not openai_client:
-        return f"⚠️ {openai_model_name}"
-    try:
-        df_ai = df_recent.copy()
-        if "Amount" in df_ai.columns:
-            df_ai = df_ai.nlargest(80, "Amount")
-        data_str = df_ai.to_csv(index=False)
-        user_prompt = f"""
-你現在是台指選擇權市場的【主力莊家】。你的目標只有一個:**在結算日吃掉最多散戶的權利金,讓自己的利潤最大化**。
-
-【市場現況】
-- 結算合約:{contract_code} (結算日: {settlement_date})
-- 現貨指數(即時運算):{taiex_price}
-
-【任務】
-請根據 CSV 籌碼數據(OI 與 Amount),進行深度的控盤推演:
-1. **肥羊與雷區分析**: 散戶在哪個價位重倉?那是你的絕殺目標。你的防守底線在哪?
-2. **操盤劇本 (Script)**: 請寫出未來幾天的「畫線」劇本。
-3. **最佳結算目標**: 給出一個具體的「點位」或「窄區間」。
-4. **莊家指令**: 給出簡短有力的指令。
-
-【回答要求】
-- 使用第一人稱(本莊、我)。
-- 語氣:**自信、冷血、貪婪**。
-- **不要**給出任何風險警語或教育性
+    main()
