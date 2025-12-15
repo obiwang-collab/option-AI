@@ -448,8 +448,9 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     )
     return fig
 
-# --- AI 分析函式 ---
-def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
+# --- AI 分析函式 (增強版：包含五大數據) ---
+def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date, 
+                     oi_changes=None, iv_metrics=None, futures_data=None, gamma_profile=None):
     if not gemini_model:
         return f"⚠️ {gemini_model_name}"
     try:
@@ -457,35 +458,87 @@ def ask_gemini_brief(df_recent, taiex_price, contract_code, settlement_date):
         if "Amount" in df_ai.columns:
             df_ai = df_ai.nlargest(80, "Amount")
         data_str = df_ai.to_csv(index=False)
+        
+        # 🆕 組裝五大數據
+        extra_info = "\n【進階數據分析】\n"
+        
+        # 1. OI 增減變化
+        if oi_changes is not None and not oi_changes.empty:
+            top_inc = oi_changes.nlargest(5, 'Change_1D')[['Strike', 'Type', 'Change_1D']]
+            top_dec = oi_changes.nsmallest(5, 'Change_1D')[['Strike', 'Type', 'Change_1D']]
+            extra_info += f"\n📈 近日OI大增前5名:\n{top_inc.to_string(index=False)}\n"
+            extra_info += f"\n📉 近日OI大減前5名:\n{top_dec.to_string(index=False)}\n"
+        
+        # 2. IV & Skew
+        if iv_metrics:
+            extra_info += f"\n📊 隱含波動率指標:\n"
+            extra_info += f"- ATM履約價: {iv_metrics['ATM_Strike']:.0f}\n"
+            extra_info += f"- ATM IV: {iv_metrics['ATM_IV']:.2f}\n"
+            extra_info += f"- 25Δ Call IV: {iv_metrics['Call_25D_IV']:.2f}\n"
+            extra_info += f"- 25Δ Put IV: {iv_metrics['Put_25D_IV']:.2f}\n"
+            extra_info += f"- Skew (RR): {iv_metrics['Skew_25D']:.2f} (正=看漲/負=避險)\n"
+        
+        # 3. 外資部位 & 基差
+        if futures_data:
+            extra_info += f"\n🏦 三大法人與基差:\n"
+            if futures_data.get('foreign_net'):
+                extra_info += f"- 外資期貨淨部位: {futures_data['foreign_net']:,} 口\n"
+            if futures_data.get('futures_price') and taiex_price:
+                basis = futures_data['futures_price'] - taiex_price
+                extra_info += f"- 期貨價格: {futures_data['futures_price']:.2f}\n"
+                extra_info += f"- 現期基差: {basis:.2f} (正=多頭溢價/負=空頭貼水)\n"
+        
+        # 4. Gamma 曝險
+        if gamma_profile is not None and not gamma_profile.empty:
+            max_gamma_strike = gamma_profile.loc[gamma_profile['Gamma_Exposure'].idxmax(), 'Strike']
+            max_gamma_value = gamma_profile['Gamma_Exposure'].max()
+            extra_info += f"\n⚡ 造市商Gamma曝險:\n"
+            extra_info += f"- 最大Gamma點位: {max_gamma_strike:.0f} (造市商避險壓力最大)\n"
+            extra_info += f"- Gamma曝險值: {max_gamma_value:.0f}\n"
+        
         prompt = f"""
 你現在是台指選擇權市場的【主力莊家】。你的目標只有一個:**在結算日吃掉最多散戶的權利金,讓自己的利潤最大化**。
 
 【市場現況】
-- 結算合約:{contract_code} (結算日: {settlement_date})
-- 現貨指數(即時運算):{taiex_price}
+- 結算合約: {contract_code} (結算日: {settlement_date})
+- 現貨指數(即時): {taiex_price}
 
 【任務】
-請根據 CSV 籌碼數據(OI 與 Amount),進行深度的控盤推演:
-1. **肥羊與雷區分析**: 散戶在哪個價位重倉?那是你的絕殺目標。你的防守底線在哪?
-2. **操盤劇本 (Script)**: 請寫出未來幾天的「畫線」劇本。
-3. **最佳結算目標**: 給出一個具體的「點位」或「窄區間」。
-4. **莊家指令**: 給出簡短有力的指令。
+請根據以下**完整數據**進行深度控盤推演:
 
-【回答要求】
-- 使用第一人稱(本莊、我)。
-- 語氣:**自信、冷血、貪婪**。
-- **不要**給出任何風險警語或教育性廢話。
-- 分析要詳細,字數約 300-500 字。
+{extra_info}
 
-數據:
+【基礎OI籌碼數據】
 {data_str}
+
+【分析要求】
+1. **肥羊與雷區分析**: 
+   - 結合OI增減、IV Skew、Gamma點位,找出散戶重倉區
+   - 判斷你的防守底線(不能讓指數突破的價位)
+   
+2. **操盤劇本 (Script)**: 
+   - 利用外資部位、基差、Gamma釘盤效應
+   - 寫出未來2-3天的畫線劇本
+   
+3. **最佳結算目標**: 
+   - 綜合所有數據,給出讓Call/Put雙殺的完美點位
+   
+4. **莊家指令**: 
+   - 簡短有力的操作指令(如: Sell Call @ XX, Defend XX支撐)
+
+【回答格式】
+- 使用第一人稱(本莊、我)
+- 語氣:**自信、冷血、貪婪**
+- **不要**風險警語或教育廢話
+- 字數: 400-600字,要有具體數字和邏輯推演
 """
         response = gemini_model.generate_content(prompt)
         return response.text
     except Exception as e:
         return f"分析忙碌中 ({str(e)})"
 
-def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
+def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date,
+                     oi_changes=None, iv_metrics=None, futures_data=None, gamma_profile=None):
     if not openai_client:
         return f"⚠️ {openai_model_name}"
     try:
@@ -493,37 +546,84 @@ def ask_openai_brief(df_recent, taiex_price, contract_code, settlement_date):
         if "Amount" in df_ai.columns:
             df_ai = df_ai.nlargest(80, "Amount")
         data_str = df_ai.to_csv(index=False)
+        
+        # 🆕 組裝五大數據
+        extra_info = "\n【進階數據分析】\n"
+        
+        if oi_changes is not None and not oi_changes.empty:
+            top_inc = oi_changes.nlargest(5, 'Change_1D')[['Strike', 'Type', 'Change_1D']]
+            top_dec = oi_changes.nsmallest(5, 'Change_1D')[['Strike', 'Type', 'Change_1D']]
+            extra_info += f"\n📈 近日OI大增前5名:\n{top_inc.to_string(index=False)}\n"
+            extra_info += f"\n📉 近日OI大減前5名:\n{top_dec.to_string(index=False)}\n"
+        
+        if iv_metrics:
+            extra_info += f"\n📊 隱含波動率指標:\n"
+            extra_info += f"- ATM履約價: {iv_metrics['ATM_Strike']:.0f}\n"
+            extra_info += f"- ATM IV: {iv_metrics['ATM_IV']:.2f}\n"
+            extra_info += f"- 25Δ Call IV: {iv_metrics['Call_25D_IV']:.2f}\n"
+            extra_info += f"- 25Δ Put IV: {iv_metrics['Put_25D_IV']:.2f}\n"
+            extra_info += f"- Skew (RR): {iv_metrics['Skew_25D']:.2f} (正=看漲/負=避險)\n"
+        
+        if futures_data:
+            extra_info += f"\n🏦 三大法人與基差:\n"
+            if futures_data.get('foreign_net'):
+                extra_info += f"- 外資期貨淨部位: {futures_data['foreign_net']:,} 口\n"
+            if futures_data.get('futures_price') and taiex_price:
+                basis = futures_data['futures_price'] - taiex_price
+                extra_info += f"- 期貨價格: {futures_data['futures_price']:.2f}\n"
+                extra_info += f"- 現期基差: {basis:.2f} (正=多頭溢價/負=空頭貼水)\n"
+        
+        if gamma_profile is not None and not gamma_profile.empty:
+            max_gamma_strike = gamma_profile.loc[gamma_profile['Gamma_Exposure'].idxmax(), 'Strike']
+            max_gamma_value = gamma_profile['Gamma_Exposure'].max()
+            extra_info += f"\n⚡ 造市商Gamma曝險:\n"
+            extra_info += f"- 最大Gamma點位: {max_gamma_strike:.0f} (造市商避險壓力最大)\n"
+            extra_info += f"- Gamma曝險值: {max_gamma_value:.0f}\n"
+        
         user_prompt = f"""
 你現在是台指選擇權市場的【主力莊家】。你的目標只有一個:**在結算日吃掉最多散戶的權利金,讓自己的利潤最大化**。
 
 【市場現況】
-- 結算合約:{contract_code} (結算日: {settlement_date})
-- 現貨指數(即時運算):{taiex_price}
+- 結算合約: {contract_code} (結算日: {settlement_date})
+- 現貨指數(即時): {taiex_price}
 
 【任務】
-請根據 CSV 籌碼數據(OI 與 Amount),進行深度的控盤推演:
-1. **肥羊與雷區分析**: 散戶在哪個價位重倉?那是你的絕殺目標。你的防守底線在哪?
-2. **操盤劇本 (Script)**: 請寫出未來幾天的「畫線」劇本。
-3. **最佳結算目標**: 給出一個具體的「點位」或「窄區間」。
-4. **莊家指令**: 給出簡短有力的指令。
+請根據以下**完整數據**進行深度控盤推演:
 
-【回答要求】
-- 使用第一人稱(本莊、我)。
-- 語氣:**自信、冷血、貪婪**。
-- **不要**給出任何風險警語或教育性廢話。
-- 分析要詳細,字數約 300-500 字。
+{extra_info}
 
-數據:
+【基礎OI籌碼數據】
 {data_str}
+
+【分析要求】
+1. **肥羊與雷區分析**: 
+   - 結合OI增減、IV Skew、Gamma點位,找出散戶重倉區
+   - 判斷你的防守底線(不能讓指數突破的價位)
+   
+2. **操盤劇本 (Script)**: 
+   - 利用外資部位、基差、Gamma釘盤效應
+   - 寫出未來2-3天的畫線劇本
+   
+3. **最佳結算目標**: 
+   - 綜合所有數據,給出讓Call/Put雙殺的完美點位
+   
+4. **莊家指令**: 
+   - 簡短有力的操作指令(如: Sell Call @ XX, Defend XX支撐)
+
+【回答格式】
+- 使用第一人稱(本莊、我)
+- 語氣:**自信、冷血、貪婪**
+- **不要**風險警語或教育廢話
+- 字數: 400-600字,要有具體數字和邏輯推演
 """
         response = openai_client.chat.completions.create(
             model=openai_model_name,
             messages=[
-                {"role": "system", "content": "你是一個冷血、唯利是圖的期貨市場莊家。你不關心散戶死活,只在乎如何讓選擇權歸零。"},
+                {"role": "system", "content": "你是一個冷血、唯利是圖的期貨市場莊家。你不關心散戶死活,只在乎如何讓選擇權歸零。你會深度分析OI增減、IV Skew、外資部位、Gamma曝險等數據,找出最有利的操盤策略。"},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.7,
-            max_tokens=800,
+            max_tokens=1000,
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -694,16 +794,36 @@ def main():
     if st.button("🚀 啟動莊家思維推演", type="primary"):
         ai_col1, ai_col2 = st.columns(2)
 
+        # 🆕 準備完整數據給 AI
+        oi_changes_data = None
+        if len(data_list) >= 2:
+            oi_changes_data = calculate_oi_changes(data_list)
+        
+        iv_metrics_data = calculate_iv_and_skew(df, final_taiex)
+        gamma_profile_data = calculate_dealer_gamma(df, final_taiex)
+
         with ai_col1:
             st.markdown(f"#### 💎 Gemini 莊家 ({gemini_model_name})")
             with st.spinner("Gemini 正在計算最大痛點..."):
-                gemini_advice = ask_gemini_brief(target_df_for_ai, final_taiex, target_code, target_date)
+                gemini_advice = ask_gemini_brief(
+                    target_df_for_ai, final_taiex, target_code, target_date,
+                    oi_changes=oi_changes_data,
+                    iv_metrics=iv_metrics_data,
+                    futures_data=futures_data,
+                    gamma_profile=gamma_profile_data
+                )
             st.info(gemini_advice)
 
         with ai_col2:
             st.markdown(f"#### 💬 ChatGPT 莊家 ({openai_model_name})")
             with st.spinner("ChatGPT 正在擬定絕殺劇本..."):
-                openai_advice = ask_openai_brief(target_df_for_ai, final_taiex, target_code, target_date)
+                openai_advice = ask_openai_brief(
+                    target_df_for_ai, final_taiex, target_code, target_date,
+                    oi_changes=oi_changes_data,
+                    iv_metrics=iv_metrics_data,
+                    futures_data=futures_data,
+                    gamma_profile=gamma_profile_data
+                )
             st.info(openai_advice)
 
     st.markdown("---")
