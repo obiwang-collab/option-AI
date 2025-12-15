@@ -988,6 +988,18 @@ def main():
         futures_price, futures_volume = get_futures_data()
         inst_fut_position = get_institutional_futures_position()
         inst_opt_today, inst_opt_date_today, inst_opt_yesterday, inst_opt_date_yesterday = get_institutional_option_data()
+    
+    # 🆕 確保所有變數都有初始值（避免 UnboundLocalError）
+    if inst_fut_position is None:
+        inst_fut_position = {}
+    
+    if inst_opt_today is None:
+        inst_opt_today = pd.DataFrame()
+        inst_opt_date_today = "N/A"
+    
+    if inst_opt_yesterday is None:
+        inst_opt_yesterday = pd.DataFrame()
+        inst_opt_date_yesterday = "N/A"
 
     if all_option_data is None or len(all_option_data) < 2:
         st.error("查無資料。需至少取得兩天有效數據。")
@@ -1002,6 +1014,12 @@ def main():
     basis = None
     if taiex_now and futures_price:
         basis = futures_price - taiex_now
+    
+    # 🆕 初始化進階指標變數
+    atm_iv = None
+    risk_reversal = None
+    atm_strike = None
+    gex_summary = None
     
     # 數據指標
     total_call_amt = df[df['Type'].str.contains('買|Call', case=False, na=False)]['Amount'].sum()
@@ -1159,24 +1177,32 @@ def main():
     # 🆕 計算進階指標（IV, GEX 等）
     plot_targets = get_next_contracts(df, data_date)
     
-    if plot_targets:
+    if plot_targets and len(plot_targets) > 0:
         nearest_contract = plot_targets[0]['info']
         df_nearest = df[df['Month'] == nearest_contract['code']]
         
-        with st.spinner('🧮 計算隱含波動率與 Gamma Exposure...'):
-            # 計算 IV 和 Risk Reversal
-            atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(
-                df_nearest, 
-                taiex_now if taiex_now else 23000, 
-                nearest_contract['date']
-            )
-            
-            # 計算 Dealer GEX
-            gex_summary = calculate_dealer_gex(
-                df_nearest,
-                taiex_now if taiex_now else 23000,
-                nearest_contract['date']
-            )
+        if not df_nearest.empty and taiex_now:
+            with st.spinner('🧮 計算隱含波動率與 Gamma Exposure...'):
+                try:
+                    # 計算 IV 和 Risk Reversal
+                    atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(
+                        df_nearest, 
+                        taiex_now, 
+                        nearest_contract['date']
+                    )
+                    
+                    # 計算 Dealer GEX
+                    gex_summary = calculate_dealer_gex(
+                        df_nearest,
+                        taiex_now,
+                        nearest_contract['date']
+                    )
+                except Exception as e:
+                    st.warning(f"進階指標計算錯誤: {str(e)}")
+                    atm_iv = None
+                    risk_reversal = None
+                    atm_strike = None
+                    gex_summary = None
         
         # 顯示進階指標
         st.markdown("### 📊 進階市場指標")
@@ -1206,16 +1232,14 @@ def main():
                 st.metric("外資期貨淨部位", "N/A")
         
         # 🆕 顯示 GEX 圖表
-        if gex_summary is not None:
+        if gex_summary is not None and not gex_summary.empty:
             st.markdown("### ⚡ Dealer Gamma Exposure (GEX)")
             gex_fig = plot_gex_chart(gex_summary, taiex_now)
             if gex_fig:
                 st.plotly_chart(gex_fig, use_container_width=True)
                 st.caption("🔍 正 GEX = 造市商買入支撐 | 負 GEX = 造市商賣出壓力")
     else:
-        atm_iv = None
-        risk_reversal = None
-        gex_summary = None
+        st.info("📊 等待合約資訊...")
     
     st.markdown("---")
     
