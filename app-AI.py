@@ -1011,15 +1011,8 @@ def main():
     data_date = all_option_data[0]['date']
     
     # 計算基差
-    basis = None
     if taiex_now and futures_price:
         basis = futures_price - taiex_now
-    
-    # 🆕 初始化進階指標變數
-    atm_iv = None
-    risk_reversal = None
-    atm_strike = None
-    gex_summary = None
     
     # 數據指標
     total_call_amt = df[df['Type'].str.contains('買|Call', case=False, na=False)]['Amount'].sum()
