@@ -1158,27 +1158,19 @@ def main():
 
                     # 使用 try-except 來捕捉任何錯誤
                     try:
-                        with ThreadPoolExecutor(max_workers=2) as executor:
-                            ai_futures_dict = {}
-                            
-                            if gemini_model: 
-                                ai_futures_dict['gemini'] = executor.submit(ask_gemini, prompt_text)
-                            
-                            if openai_client: 
-                                ai_futures_dict['chatgpt'] = executor.submit(ask_chatgpt, prompt_text)
-
-                            for key, future in ai_futures_dict.items():
-                                try:
-                                    result = future.result(timeout=60)
-                                    if key == 'gemini': 
-                                        gemini_result = result
-                                    elif key == 'chatgpt': 
-                                        chatgpt_result = result
-                                except Exception as e:
-                                    if key == 'gemini':
-                                        gemini_result = f"⚠️ Gemini 執行錯誤: {str(e)}"
-                                    elif key == 'chatgpt':
-                                        chatgpt_result = f"⚠️ ChatGPT 執行錯誤: {str(e)}"
+                        # 直接呼叫函數而不使用 ThreadPoolExecutor（更簡單可靠）
+                        if gemini_model:
+                            try:
+                                gemini_result = ask_gemini(prompt_text)
+                            except Exception as e:
+                                gemini_result = f"⚠️ Gemini 執行錯誤: {str(e)}"
+                        
+                        if openai_client:
+                            try:
+                                chatgpt_result = ask_chatgpt(prompt_text)
+                            except Exception as e:
+                                chatgpt_result = f"⚠️ ChatGPT 執行錯誤: {str(e)}"
+                                
                     except Exception as e:
                         st.error(f"AI 分析執行錯誤: {str(e)}")
 
