@@ -643,33 +643,32 @@ def main():
     # === 法人籌碼區 ===
     st.markdown("### 🏦 三大法人籌碼佈局")
     
-    # 期貨法人
-    if inst_fut_position:
-        st.caption(f"📅 期貨籌碼日期: {inst_fut_position.get('date', 'N/A')}")
-        f1, f2, f3 = st.columns(3)
-        
-        for role, col in zip(['外資', '投信', '自營商'], [f1, f2, f3]):
-            val = inst_fut_position.get(role, 0)
-            # 正數=偏多(綠色), 負數=偏空(紅色)
-            direction = "🟢 偏多" if val > 0 else "🔴 偏空" if val < 0 else "⚪ 中性"
-            col.metric(
-                f"{role} 期貨淨單", 
-                f"{val:+,} 口",
-                direction,
-                delta_color="normal" if val > 0 else "inverse"
-            )
-    else:
-        st.warning("⚠️ 查無法人期貨數據")
-
-    st.markdown("---")
+    # 建立統一的籌碼表格
+    institutional_display = []
     
-    # 選擇權法人
+    # 收集期貨數據
+    fut_data_date = "N/A"
+    if inst_fut_position:
+        fut_data_date = inst_fut_position.get('date', 'N/A')
+        for inst in ['外資', '投信', '自營商']:
+            val = inst_fut_position.get(inst, 0)
+            direction = "🟢 偏多" if val > 0 else "🔴 偏空" if val < 0 else "⚪ 中性"
+            
+            institutional_display.append({
+                '法人': inst,
+                '期貨淨單': f"{val:+,} 口",
+                '期貨傾向': direction,
+                'Call淨單': '-',
+                'Put淨單': '-',
+                '選擇權策略': '-'
+            })
+    
+    # 收集選擇權數據
+    opt_data_date = "N/A"
     if inst_opt_data and 'date' in inst_opt_data:
-        st.caption(f"📅 選擇權籌碼日期: {inst_opt_data.get('date', 'N/A')}")
+        opt_data_date = inst_opt_data.get('date', 'N/A')
         
-        # 創建表格展示
-        opt_display = []
-        for inst in ['自營商', '投信', '外資']:
+        for idx, inst in enumerate(['外資', '投信', '自營商']):
             if inst in inst_opt_data:
                 data = inst_opt_data[inst]
                 call_net = data.get('Call', 0)
@@ -687,17 +686,32 @@ def main():
                 else:
                     strategy = "⚪ 中性"
                 
-                opt_display.append({
-                    '法人': inst,
-                    'Call淨單': f"{call_net:+,}",
-                    'Put淨單': f"{put_net:+,}",
-                    '策略傾向': strategy
-                })
-        
-        if opt_display:
-            st.dataframe(pd.DataFrame(opt_display), use_container_width=True, hide_index=True)
+                # 如果已有期貨數據,更新對應列
+                if inst_fut_position and idx < len(institutional_display):
+                    institutional_display[idx]['Call淨單'] = f"{call_net:+,} 口"
+                    institutional_display[idx]['Put淨單'] = f"{put_net:+,} 口"
+                    institutional_display[idx]['選擇權策略'] = strategy
+                # 否則新增列
+                else:
+                    institutional_display.append({
+                        '法人': inst,
+                        '期貨淨單': '-',
+                        '期貨傾向': '-',
+                        'Call淨單': f"{call_net:+,} 口",
+                        'Put淨單': f"{put_net:+,} 口",
+                        '選擇權策略': strategy
+                    })
+    
+    # 顯示統一表格
+    if institutional_display:
+        st.caption(f"📅 期貨籌碼日期: {fut_data_date} | 選擇權籌碼日期: {opt_data_date}")
+        st.dataframe(
+            pd.DataFrame(institutional_display), 
+            use_container_width=True, 
+            hide_index=True
+        )
     else:
-        st.warning("⚠️ 查無法人選擇權數據")
+        st.warning("⚠️ 查無法人籌碼數據")
     
     st.markdown("---")
     
