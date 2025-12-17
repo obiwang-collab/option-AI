@@ -17,7 +17,7 @@ import urllib3
 # 忽略 SSL 警告 (必要)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- 頁面設定 ---
+# --- 頁面設定 (必須放在第一行) ---
 st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (莊家控盤版)")
 TW_TZ = timezone(timedelta(hours=8))
 
@@ -68,8 +68,32 @@ def show_ad_placeholder():
     st.markdown(f"""<div style='background:#f8f9fa;padding:40px;border:2px dashed #dee2e6;text-align:center;'><p style='color:#6c757d'>廣告位置 (Publisher ID: {ADSENSE_PUB_ID})</p></div>""", unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
+# 🔥 核心修復：共用請求函式 (解決編碼與檔頭問題)
+# ----------------------------------------------------------------------
+def fetch_taifex_html(url, payload):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.taifex.com.tw/',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    try:
+        # 使用 Session 可以維持 cookie，增加成功率
+        session = requests.Session()
+        res = session.post(url, data=payload, headers=headers, timeout=10, verify=False)
+        
+        # 自動判斷編碼：先嘗試 UTF-8，失敗則嘗試 Big5 (期交所常混用)
+        try:
+            html_text = res.content.decode('utf-8')
+        except UnicodeDecodeError:
+            html_text = res.content.decode('big5', errors='ignore')
+            
+        if "查無資料" in html_text or len(html_text) < 500:
+            return None
+        return html_text
+    except Exception as e:
+        return None
 
-# --- 核心日期函式 ---
+# --- 日期函式 ---
 def get_settlement_date(contract_code):
     code = str(contract_code).strip().upper()
     for key, fix_date in MANUAL_SETTLEMENT_FIX.items():
@@ -122,77 +146,75 @@ def get_realtime_data():
 @st.cache_data(ttl=300)
 def get_futures_data():
     """獲取台指期貨價格 (自動回溯)"""
-    url = "https://www.taifex.com.tw/cht/3/futContractsDate"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # 修正：改用每日行情表 (futDailyMarketReport)
+    url = "https://www.taifex.com.tw/cht/3/futDailyMarketReport"
     
     for i in range(14):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
         
         query_date = target_date.strftime('%Y/%m/%d')
-        # commodity_id=TX 代表大台
-        payload = {'queryType': '1', 'marketCode': '0', 'commodity_id': 'TX', 'queryDate': query_date}
+        # queryType=2 (日+夜盤), marketCode=0 (期貨)
+        payload = {'queryType': '2', 'marketCode': '0', 'commodity_id': 'TX', 'queryDate': query_date}
         
+        html = fetch_taifex_html(url, payload)
+        if not html: continue
+
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
-            res.encoding = 'utf-8'
-            if "查無資料" in res.text: continue
-            
-            dfs = pd.read_html(StringIO(res.text))
+            dfs = pd.read_html(StringIO(html))
             if not dfs: continue
             df = dfs[0]
             
             futures_price = None
             for col in df.columns:
                 if '收盤價' in str(col) or '成交價' in str(col):
-                    try: futures_price = float(str(df.iloc[0][col]).replace(',', ''))
-                    except: pass
+                    val = str(df.iloc[0][col]).replace(',', '').strip()
+                    if val and val != '-':
+                        try: futures_price = float(val)
+                        except: pass
+                        break
             
-            if futures_price: return futures_price, None, query_date
+            if futures_price: 
+                # 抓取成交量
+                volume = 0
+                for col in df.columns:
+                    if '成交量' in str(col):
+                        try: volume = float(str(df.iloc[0][col]).replace(',', ''))
+                        except: pass
+                return futures_price, volume, query_date
         except: pass
     
     return None, None, "N/A"
 
-# --- 🔥 (修正版) 三大法人期貨 - 改用 HTML 檢視網址 ---
+# --- 🔥 (修正版) 三大法人期貨 ---
 @st.cache_data(ttl=300)
 def get_institutional_futures_position():
-    """獲取法人期貨淨部位 (HTML Parsing)"""
-    # 這是「區分各期貨契約」的網頁，可以用 queryType=1 區分身分
+    """獲取法人期貨淨部位 (修正編碼與解析)"""
     url = "https://www.taifex.com.tw/cht/3/futContractsDate"
-    headers = {'User-Agent': 'Mozilla/5.0'}
     
     for i in range(14):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue 
         
         query_date = target_date.strftime('%Y/%m/%d')
-        # queryType=1 是重點，這樣才會顯示「三大法人」
         payload = {'queryType': '1', 'goDay': '', 'doDay': '', 'queryDate': query_date, 'commodityId': 'TXF'}
         
+        html = fetch_taifex_html(url, payload)
+        if not html: continue
+        
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
-            res.encoding = 'utf-8'
-            if "查無資料" in res.text or len(res.text) < 500: continue
-            
-            dfs = pd.read_html(StringIO(res.text))
+            dfs = pd.read_html(StringIO(html))
             if not dfs: continue
             df = dfs[0]
             
-            # 尋找含有 "身分" 或 "身份" 的欄位
             inst_data = {}
-            # 期交所 HTML 表格很亂，通常第 3 欄是身分別，最後幾欄是多空淨額
-            # 我們直接用字串搜尋法最穩
-            
-            # 轉成字串搜尋
             for idx, row in df.iterrows():
                 row_str = " ".join([str(x) for x in row.values])
                 
-                # 抓取數值 (取最後一個出現的數字，通常是多空淨額)
                 def extract_net(r):
-                    # 假設表格最後一欄是「未平倉淨額」
+                    # 抓取最後一欄(未平倉淨額)
                     try: return int(str(r.iloc[-1]).replace(',', ''))
                     except: 
-                        # 有時候倒數第二欄才是，嘗試 failover
                         try: return int(str(r.iloc[-2]).replace(',', ''))
                         except: return 0
 
@@ -203,20 +225,18 @@ def get_institutional_futures_position():
                 elif '自營商' in row_str:
                     inst_data['自營商'] = extract_net(row)
             
-            if inst_data:
+            if inst_data and len(inst_data) >= 2:
                 inst_data['date'] = query_date
                 return inst_data
         except: pass
 
     return None
 
-# --- 🔥 (修正版) 三大法人選擇權 - 改用 callsAndPutsDate ---
+# --- 🔥 (修正版) 三大法人選擇權 ---
 @st.cache_data(ttl=300)
 def get_institutional_option_data():
-    """獲取法人選擇權數據 (HTML Parsing)"""
-    # 這是「區分買賣權」的法人網頁
+    """獲取法人選擇權數據"""
     url = "https://www.taifex.com.tw/cht/3/callsAndPutsDate"
-    headers = {'User-Agent': 'Mozilla/5.0'}
     all_inst_data = []
     
     for i in range(20):
@@ -224,20 +244,16 @@ def get_institutional_option_data():
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
         
         query_date = target_date.strftime('%Y/%m/%d')
-        # queryType=1: 依身分別, commodityId=TXO
         payload = {'queryType': '1', 'goDay': '', 'doDay': '', 'queryDate': query_date, 'commodityId': 'TXO'}
         
+        html = fetch_taifex_html(url, payload)
+        if not html: continue
+        
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
-            res.encoding = 'utf-8'
-            if "查無資料" in res.text or len(res.text) < 500: continue
-            
-            dfs = pd.read_html(StringIO(res.text))
+            dfs = pd.read_html(StringIO(html))
             if not dfs: continue
             df = dfs[0]
-            
-            # 簡單清理
-            df_filtered = df[df.iloc[:, 0].astype(str).str.contains('自營商|投信|外資', na=False)]
+            df_filtered = df[df.iloc[:, 0].astype(str).str.contains('自營商|投信|外資', na=False)].copy()
             
             if not df_filtered.empty:
                 all_inst_data.append({'date': query_date, 'df': df_filtered})
@@ -252,11 +268,10 @@ def get_institutional_option_data():
     
     return today_df, today_date, prev_df, None
 
-# --- (修正版) 選擇權全履約價 - 保持原樣但確保回溯 ---
+# --- 🔥 (修正版) 選擇權全履約價 (使用 fetch_taifex_html) ---
 @st.cache_data(ttl=300)
 def get_option_data_multi_days(days=3):
     url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
-    headers = {'User-Agent': 'Mozilla/5.0'}
     all_data = []
 
     for i in range(20):
@@ -264,11 +279,12 @@ def get_option_data_multi_days(days=3):
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
         query_date = target_date.strftime('%Y/%m/%d')
         payload = {'queryType': '2', 'marketCode': '0', 'commodity_id': 'TXO', 'queryDate': query_date, 'MarketCode': '0', 'commodity_idt': 'TXO'}
+        
+        html = fetch_taifex_html(url, payload)
+        if not html: continue
+
         try:
-            res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
-            res.encoding = 'utf-8'
-            if "查無資料" in res.text or len(res.text) < 500: continue
-            dfs = pd.read_html(StringIO(res.text))
+            dfs = pd.read_html(StringIO(html))
             df = dfs[0]
             df.columns = [str(c).replace(' ', '').replace('*', '').replace('契約', '').strip() for c in df.columns]
             col_map = {'Month': next((c for c in df.columns if '月' in c or '週' in c), None), 'Strike': next((c for c in df.columns if '履約' in c), None), 'Type': next((c for c in df.columns if '買賣' in c), None), 'OI': next((c for c in df.columns if '未沖銷' in c or 'OI' in c), None), 'Price': next((c for c in df.columns if '結算' in c or '收盤' in c or 'Price' in c), None)}
@@ -490,7 +506,7 @@ def main():
     if 'show_analysis_results' not in st.session_state: st.session_state.show_analysis_results = False
     inject_adsense_head()
     
-    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤 - 強制回溯版)")
+    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤 - 修復版)")
     
     if st.sidebar.button("🔄 重新整理"):
         st.cache_data.clear()
@@ -499,7 +515,7 @@ def main():
     
     st.sidebar.caption(f"Gemini: {'✅' if gemini_model else '❌'} | ChatGPT: {'✅' if openai_client else '❌'}")
 
-    with st.spinner("🔄 正在強制回溯搜尋最新數據..."):
+    with st.spinner("🔄 正在搜尋最新數據 (自動編碼/網址修正)..."):
         taiex_now = get_realtime_data()
         
         # 1. 期貨行情 (含日期)
@@ -515,7 +531,7 @@ def main():
         all_option_data = get_option_data_multi_days(days=2)
 
     if not all_option_data:
-        st.error("❌ 無法抓取任何選擇權數據 (已回溯 20 天)")
+        st.error("❌ 無法抓取任何選擇權數據 (已回溯 20 天，請確認期交所是否維護中)")
         return
 
     # 數據處理
@@ -559,50 +575,4 @@ def main():
 
     st.markdown("---")
 
-    # === 進階計算 & 圖表 ===
-    targets = get_next_contracts(df_full, data_date)
-    if targets:
-        target = targets[0]
-        df_target = df_full[df_full['Month'] == target['code']]
-        
-        atm_iv, rr, atm_k = calculate_risk_reversal(df_target, taiex_now or 23000, target['date'])
-        gex_df = calculate_dealer_gex(df_target, taiex_now or 23000, target['date'])
-        
-        st.markdown(f"### 📊 市場指標 ({target['code']} 結算: {target['date']})")
-        k1, k2 = st.columns(2)
-        k1.metric("ATM IV", f"{atm_iv*100:.2f}%" if atm_iv else "N/A")
-        k2.metric("Risk Reversal", f"{rr*100:.2f}%" if rr else "N/A", "看漲" if rr and rr>0 else "看跌")
-        
-        if gex_df is not None:
-            st.plotly_chart(plot_gex_chart(gex_df, taiex_now), use_container_width=True)
-
-        st.plotly_chart(plot_tornado_chart(df_target, f"{target['code']} 籌碼分佈", taiex_now), use_container_width=True)
-    
-    # === AI 分析 ===
-    st.markdown("---")
-    if st.session_state.analysis_unlocked:
-        if st.button("🧛‍♂️ 啟動 AI 分析"): st.session_state.show_analysis_results = True
-    else:
-        show_ad_placeholder()
-        if st.button("⏱️ 解鎖 AI 分析"):
-            with st.empty():
-                for i in range(5, 0, -1):
-                    st.write(f"⏳ {i}...")
-                    time.sleep(1)
-            st.session_state.analysis_unlocked = True
-            st.rerun()
-
-    if st.session_state.show_analysis_results and targets:
-        data_str = prepare_ai_data(df_full, inst_opt_today, inst_opt_prev, inst_fut_position, futures_price, taiex_now, basis, atm_iv, rr, gex_df, data_date)
-        prompt = build_ai_prompt(data_str, taiex_now)
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("🔵 Gemini")
-            st.info(ask_gemini(prompt))
-        with c2:
-            st.subheader("🟢 ChatGPT")
-            st.success(ask_chatgpt(prompt))
-
-if __name__ == "__main__":
-    main()
+    #
