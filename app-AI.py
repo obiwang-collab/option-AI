@@ -7,26 +7,21 @@ from datetime import datetime, timedelta, timezone
 from io import StringIO
 import calendar
 import re
-import google.generativeai as genai
-from openai import OpenAI
-import streamlit.components.v1 as components
-import numpy as np
-from scipy.stats import norm
 import urllib3
 
 # 忽略 SSL 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 頁面設定 (必須在第一行) ---
-st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (極速版)")
+st.set_page_config(layout="wide", page_title="台指期籌碼戰情室 (極速穩定版)")
 TW_TZ = timezone(timedelta(hours=8))
 
 # ==========================================
-# 🔑 金鑰與設定
+# 🔑 設定區
 # ==========================================
-GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
+# 若無金鑰則留空，不影響基礎功能
+GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "") 
 OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", "")
-ADSENSE_PUB_ID = 'ca-pub-4585150092118682'
 
 # --- 核心請求函式 (優化：加上進度回報) ---
 def fetch_taifex_html(url, payload, status_text=None):
@@ -36,12 +31,15 @@ def fetch_taifex_html(url, payload, status_text=None):
         'Content-Type': 'application/x-www-form-urlencoded'
     }
     try:
-        if status_text: status_text.text(f"正在連線: {payload.get('queryDate', 'Unknown')} ...")
+        if status_text: 
+            date_str = payload.get('queryDate', 'Unknown')
+            status_text.text(f"正在連線: {date_str} ...")
         
         session = requests.Session()
-        # ⚠️ 優化：Timeout 降為 3 秒，避免卡死
+        # Timeout 設為 3 秒，網路卡住時快速跳過
         res = session.post(url, data=payload, headers=headers, timeout=3, verify=False)
         
+        # 雙重編碼解碼嘗試
         try:
             html_text = res.content.decode('utf-8')
         except UnicodeDecodeError:
@@ -50,15 +48,15 @@ def fetch_taifex_html(url, payload, status_text=None):
         if "查無資料" in html_text or len(html_text) < 500:
             return None
         return html_text
-    except Exception as e:
+    except Exception:
         return None
 
-# --- 資料獲取函式 (改寫為接收 status_container) ---
+# --- 資料獲取函式 ---
 
 # 1. 獲取期貨行情
 def get_futures_data(status_container):
     url = "https://www.taifex.com.tw/cht/3/futDailyMarketReport"
-    # ⚠️ 優化：只回朔 5 天，避免轉圈圈太久
+    # 回朔 5 天
     for i in range(5):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
@@ -68,7 +66,7 @@ def get_futures_data(status_container):
         
         html = fetch_taifex_html(url, payload, status_container)
         if not html: 
-            time.sleep(0.5) # 禮貌性延遲
+            time.sleep(0.5) 
             continue
 
         try:
@@ -107,9 +105,8 @@ def get_institutional_futures(status_container):
             inst_data = {}
             for idx, row in df.iterrows():
                 row_str = " ".join([str(x) for x in row.values])
-                # 簡單暴力抓取法
                 def get_val(r):
-                    try: return int(str(r.iloc[-1]).replace(',', '')) # 最後一欄通常是未平倉淨額
+                    try: return int(str(r.iloc[-1]).replace(',', '')) 
                     except: return 0
                 
                 if '外資' in row_str: inst_data['外資'] = get_val(row)
@@ -148,12 +145,12 @@ def get_institutional_options(status_container):
     if not all_data: return None, None
     return all_data[0]['df'], all_data[0]['date']
 
-# 4. 獲取選擇權全市場 (最花時間)
+# 4. 獲取選擇權全市場 (已修復回傳值 Bug)
 def get_option_market(status_container):
     url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
     all_data = []
     
-    # 這裡稍微找久一點 (7天)，但有進度條就不怕
+    # 這裡稍微找久一點 (7天)，以免連續假日沒資料
     for i in range(7):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
@@ -193,7 +190,8 @@ def get_option_market(status_container):
                 if len(all_data) >= 2: break # 抓兩天算差異
         except: continue
         
-    if not all_data: return None
+    # 🔥 重要修復：若無資料，必須回傳兩個 None，否則主程式會報 TypeError
+    if not all_data: return None, None
     
     # 計算 OI 變化
     df_curr = all_data[0]['df']
@@ -206,14 +204,7 @@ def get_option_market(status_container):
         
     return df_curr, all_data[0]['date']
 
-# --- 輔助函式 (日期與繪圖) ---
-def get_settlement_date(code):
-    try:
-        # 簡易版結算日推算，不精確但也夠用了
-        if 'W' in code: return "週選結算" 
-        return f"{code[:4]}/{code[4:]}/第三個週三"
-    except: return "未知"
-
+# --- 繪圖函式 ---
 def plot_tornado(df, title, spot):
     df_call = df[df['Type'].str.contains('Call|買')].copy()
     df_put = df[df['Type'].str.contains('Put|賣')].copy()
@@ -223,7 +214,8 @@ def plot_tornado(df, title, spot):
     
     # 過濾範圍 (現貨上下 600 點)
     center = spot if spot else data['Strike'].median()
-    data = data[(data['Strike'] >= center - 600) & (data['Strike'] <= center + 600)]
+    if center > 0:
+        data = data[(data['Strike'] >= center - 600) & (data['Strike'] <= center + 600)]
     
     fig = go.Figure()
     fig.add_trace(go.Bar(y=data['Strike'], x=-data['OI_P'], orientation='h', name='Put (支撐)', marker_color='green'))
@@ -248,9 +240,6 @@ def main():
     status_box = st.empty() # 佔位符，用來顯示進度
     
     with st.spinner("🚀 正在啟動數據引擎..."):
-        # 這裡不使用 cache，直接抓取以確保看到進度 (Streamlit cache 容易造成畫面凍結感)
-        # 或者您可以保留 cache 但需配合 status_container (這裡為求穩定直接跑)
-        
         status_box.text("⏳ 正在連線: 期貨行情...")
         fut_price, fut_date = get_futures_data(status_box)
         
@@ -261,12 +250,18 @@ def main():
         inst_opt_df, inst_opt_date = get_institutional_options(status_box)
         
         status_box.text("⏳ 正在連線: 全市場選擇權 (請稍候)...")
-        opt_df, opt_date = get_option_market(status_box)
         
+        # 🔥 安全呼叫：防止 None 解包錯誤
+        try:
+            opt_df, opt_date = get_option_market(status_box)
+        except Exception as e:
+            opt_df, opt_date = None, None
+            # st.error(f"Debug: {e}") # 需要除錯時可打開
+
         status_box.empty() # 清除進度文字
 
     # === 檢查數據是否為空 ===
-    if not opt_df is not None:
+    if opt_df is None:
         st.error("❌ 數據抓取失敗。可能是期交所目前阻擋連線，或非交易時間。")
         st.warning("建議：請過 10 秒後再按一次「重新抓取」。")
         return
@@ -288,17 +283,27 @@ def main():
         k3.metric("外資期貨淨單", f"{f_net:+,}", delta_color="inverse" if f_net > 0 else "normal")
 
     # 2. 法人籌碼表格
-    if inst_fut:
-        st.caption("三大法人期貨佈局:")
-        st.json(inst_fut)
-        
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        if inst_fut:
+            st.caption("🏦 三大法人期貨佈局:")
+            st.json(inst_fut)
+    with c2:
+        if inst_opt_df is not None:
+            st.caption(f"📊 法人選擇權淨部位 ({inst_opt_date}):")
+            st.dataframe(inst_opt_df, height=200, use_container_width=True)
+
     # 3. 龍捲風圖 (找出最近月)
+    st.markdown("---")
     months = sorted(opt_df['Month'].unique())
-    target_month = months[0] # 最近月
-    
-    st.subheader(f"🌪️ 籌碼分佈圖 ({target_month})")
-    df_target = opt_df[opt_df['Month'] == target_month]
-    st.plotly_chart(plot_tornado(df_target, f"{target_month} 選權支撐壓力", fut_price), use_container_width=True)
+    if months:
+        target_month = months[0] # 預設選最近月
+        # 如果最近月是週選且已結算，可能要選下一個，這裡簡單先取第一個
+        
+        st.subheader(f"🌪️ 籌碼分佈圖 ({target_month})")
+        df_target = opt_df[opt_df['Month'] == target_month]
+        st.plotly_chart(plot_tornado(df_target, f"{target_month} 支撐壓力區", fut_price), use_container_width=True)
 
     # 4. 下載
     st.download_button("📥 下載 Excel (CSV)", opt_df.to_csv(index=False).encode('utf-8-sig'), "opt_data.csv")
