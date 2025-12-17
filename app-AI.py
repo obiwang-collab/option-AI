@@ -118,83 +118,105 @@ def get_realtime_data():
         except: pass
     return taiex
 
-# --- 🔥 (修正版) 獲取期貨行情 ---
+# --- 🔥 (強化版) 獲取期貨行情 ---
 @st.cache_data(ttl=300)
 def get_futures_data():
-    """獲取台指期貨價格 (自動回溯)"""
+    """獲取台指期貨價格 (自動回溯 30 天)"""
     url = "https://www.taifex.com.tw/cht/3/futContractsDate"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
-    for i in range(14):
+    # 🔥 移除時間限制，從當天開始嘗試
+    for i in range(30):  # 增加到 30 天
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
-        if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
-        
         query_date = target_date.strftime('%Y/%m/%d')
-        # commodity_id=TX 代表大台
-        payload = {'queryType': '1', 'marketCode': '0', 'commodity_id': 'TX', 'queryDate': query_date}
+        
+        payload = {
+            'queryType': '1', 
+            'marketCode': '0', 
+            'commodity_id': 'TX', 
+            'queryDate': query_date
+        }
         
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
-            if "查無資料" in res.text: continue
+            
+            # 檢查是否有數據
+            if "查無資料" in res.text or len(res.text) < 500:
+                continue
             
             dfs = pd.read_html(StringIO(res.text))
-            if not dfs: continue
+            if not dfs or len(dfs) == 0:
+                continue
+            
             df = dfs[0]
             
+            # 尋找收盤價欄位
             futures_price = None
             for col in df.columns:
                 if '收盤價' in str(col) or '成交價' in str(col):
-                    try: futures_price = float(str(df.iloc[0][col]).replace(',', ''))
-                    except: pass
+                    try:
+                        val = str(df.iloc[0][col]).replace(',', '').strip()
+                        if val and val != '-':
+                            futures_price = float(val)
+                            break
+                    except:
+                        pass
             
-            if futures_price: return futures_price, None, query_date
-        except: pass
+            if futures_price and futures_price > 0:
+                return futures_price, None, query_date
+                
+        except Exception as e:
+            continue
     
     return None, None, "N/A"
 
-# --- 🔥 (修正版) 三大法人期貨 - 改用 HTML 檢視網址 ---
+# --- 🔥 (強化版) 三大法人期貨 ---
 @st.cache_data(ttl=300)
 def get_institutional_futures_position():
-    """獲取法人期貨淨部位 (HTML Parsing)"""
-    # 這是「區分各期貨契約」的網頁，可以用 queryType=1 區分身分
+    """獲取法人期貨淨部位 (回溯 30 天)"""
     url = "https://www.taifex.com.tw/cht/3/futContractsDate"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
-    for i in range(14):
+    # 🔥 移除時間限制
+    for i in range(30):  # 增加到 30 天
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
-        if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue 
-        
         query_date = target_date.strftime('%Y/%m/%d')
-        # queryType=1 是重點，這樣才會顯示「三大法人」
-        payload = {'queryType': '1', 'goDay': '', 'doDay': '', 'queryDate': query_date, 'commodityId': 'TXF'}
+        
+        payload = {
+            'queryType': '1',  # 這是關鍵，顯示三大法人
+            'goDay': '', 
+            'doDay': '', 
+            'queryDate': query_date, 
+            'commodityId': 'TXF'
+        }
         
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
-            if "查無資料" in res.text or len(res.text) < 500: continue
+            
+            if "查無資料" in res.text or len(res.text) < 500:
+                continue
             
             dfs = pd.read_html(StringIO(res.text))
-            if not dfs: continue
+            if not dfs:
+                continue
+            
             df = dfs[0]
-            
-            # 尋找含有 "身分" 或 "身份" 的欄位
             inst_data = {}
-            # 期交所 HTML 表格很亂，通常第 3 欄是身分別，最後幾欄是多空淨額
-            # 我們直接用字串搜尋法最穩
             
-            # 轉成字串搜尋
+            # 搜尋法人數據
             for idx, row in df.iterrows():
                 row_str = " ".join([str(x) for x in row.values])
                 
-                # 抓取數值 (取最後一個出現的數字，通常是多空淨額)
                 def extract_net(r):
-                    # 假設表格最後一欄是「未平倉淨額」
-                    try: return int(str(r.iloc[-1]).replace(',', ''))
-                    except: 
-                        # 有時候倒數第二欄才是，嘗試 failover
-                        try: return int(str(r.iloc[-2]).replace(',', ''))
-                        except: return 0
+                    try:
+                        return int(str(r.iloc[-1]).replace(',', ''))
+                    except:
+                        try:
+                            return int(str(r.iloc[-2]).replace(',', ''))
+                        except:
+                            return 0
 
                 if '外資' in row_str:
                     inst_data['外資'] = extract_net(row)
@@ -203,48 +225,62 @@ def get_institutional_futures_position():
                 elif '自營商' in row_str:
                     inst_data['自營商'] = extract_net(row)
             
-            if inst_data:
+            if inst_data and len(inst_data) >= 2:  # 至少要有 2 個法人數據
                 inst_data['date'] = query_date
                 return inst_data
-        except: pass
+                
+        except Exception as e:
+            continue
 
     return None
 
-# --- 🔥 (修正版) 三大法人選擇權 - 改用 callsAndPutsDate ---
+# --- 🔥 (強化版) 三大法人選擇權 ---
 @st.cache_data(ttl=300)
 def get_institutional_option_data():
-    """獲取法人選擇權數據 (HTML Parsing)"""
-    # 這是「區分買賣權」的法人網頁
+    """獲取法人選擇權數據 (回溯 30 天)"""
     url = "https://www.taifex.com.tw/cht/3/callsAndPutsDate"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     all_inst_data = []
     
-    for i in range(20):
+    # 🔥 移除時間限制
+    for i in range(30):  # 增加到 30 天
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
-        if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
-        
         query_date = target_date.strftime('%Y/%m/%d')
-        # queryType=1: 依身分別, commodityId=TXO
-        payload = {'queryType': '1', 'goDay': '', 'doDay': '', 'queryDate': query_date, 'commodityId': 'TXO'}
+        
+        payload = {
+            'queryType': '1',  # 依身分別
+            'goDay': '', 
+            'doDay': '', 
+            'queryDate': query_date, 
+            'commodityId': 'TXO'
+        }
         
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
-            if "查無資料" in res.text or len(res.text) < 500: continue
+            
+            if "查無資料" in res.text or len(res.text) < 500:
+                continue
             
             dfs = pd.read_html(StringIO(res.text))
-            if not dfs: continue
+            if not dfs:
+                continue
+            
             df = dfs[0]
             
-            # 簡單清理
+            # 過濾出法人資料
             df_filtered = df[df.iloc[:, 0].astype(str).str.contains('自營商|投信|外資', na=False)]
             
-            if not df_filtered.empty:
+            if not df_filtered.empty and len(df_filtered) >= 2:  # 至少要有資料
                 all_inst_data.append({'date': query_date, 'df': df_filtered})
-                if len(all_inst_data) >= 2: break
-        except: pass
+                if len(all_inst_data) >= 2:
+                    break
+                    
+        except Exception as e:
+            continue
     
-    if len(all_inst_data) < 1: return None, None, None, None
+    if len(all_inst_data) < 1:
+        return None, None, None, None
     
     today_df = all_inst_data[0]['df']
     today_date = all_inst_data[0]['date']
@@ -252,37 +288,73 @@ def get_institutional_option_data():
     
     return today_df, today_date, prev_df, None
 
-# --- (修正版) 選擇權全履約價 - 保持原樣但確保回溯 ---
+# --- 🔥 (強化版) 選擇權全履約價 ---
 @st.cache_data(ttl=300)
 def get_option_data_multi_days(days=3):
+    """獲取選擇權全市場數據 (回溯 30 天)"""
     url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     all_data = []
 
-    for i in range(20):
+    # 🔥 移除時間限制，增加回溯天數
+    for i in range(30):  # 從 20 天增加到 30 天
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
-        if i == 0 and datetime.now(tz=TW_TZ).hour < 15: continue
         query_date = target_date.strftime('%Y/%m/%d')
-        payload = {'queryType': '2', 'marketCode': '0', 'commodity_id': 'TXO', 'queryDate': query_date, 'MarketCode': '0', 'commodity_idt': 'TXO'}
+        
+        payload = {
+            'queryType': '2', 
+            'marketCode': '0', 
+            'commodity_id': 'TXO', 
+            'queryDate': query_date, 
+            'MarketCode': '0', 
+            'commodity_idt': 'TXO'
+        }
+        
         try:
             res = requests.post(url, data=payload, headers=headers, timeout=5, verify=False)
             res.encoding = 'utf-8'
-            if "查無資料" in res.text or len(res.text) < 500: continue
+            
+            if "查無資料" in res.text or len(res.text) < 500:
+                continue
+            
             dfs = pd.read_html(StringIO(res.text))
+            if not dfs:
+                continue
+                
             df = dfs[0]
+            
+            # 清理欄位名稱
             df.columns = [str(c).replace(' ', '').replace('*', '').replace('契約', '').strip() for c in df.columns]
-            col_map = {'Month': next((c for c in df.columns if '月' in c or '週' in c), None), 'Strike': next((c for c in df.columns if '履約' in c), None), 'Type': next((c for c in df.columns if '買賣' in c), None), 'OI': next((c for c in df.columns if '未沖銷' in c or 'OI' in c), None), 'Price': next((c for c in df.columns if '結算' in c or '收盤' in c or 'Price' in c), None)}
-            if not all(col_map.values()): continue
+            
+            # 找到必要欄位
+            col_map = {
+                'Month': next((c for c in df.columns if '月' in c or '週' in c), None),
+                'Strike': next((c for c in df.columns if '履約' in c), None),
+                'Type': next((c for c in df.columns if '買賣' in c), None),
+                'OI': next((c for c in df.columns if '未沖銷' in c or 'OI' in c), None),
+                'Price': next((c for c in df.columns if '結算' in c or '收盤' in c or 'Price' in c), None)
+            }
+            
+            if not all(col_map.values()):
+                continue
+            
+            # 重新命名並處理
             df = df.rename(columns={k:v for k,v in col_map.items() if v})[['Month', 'Strike', 'Type', 'OI', 'Price']].dropna(subset=['Type'])
             df['Type'] = df['Type'].astype(str).str.strip()
             df['Strike'] = pd.to_numeric(df['Strike'].astype(str).str.replace(',', ''), errors='coerce')
             df['OI'] = pd.to_numeric(df['OI'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             df['Price'] = pd.to_numeric(df['Price'].astype(str).str.replace(',', '').replace('-', '0'), errors='coerce').fillna(0)
             df['Amount'] = df['OI'] * df['Price'] * 50
-            if df['OI'].sum() > 0:
+            
+            # 驗證數據有效性
+            if df['OI'].sum() > 0 and len(df) > 10:  # 確保有足夠數據
                 all_data.append({'date': query_date, 'df': df})
-                if len(all_data) >= days: break
-        except: continue
+                if len(all_data) >= days:
+                    break
+                    
+        except Exception as e:
+            continue
+    
     return all_data if len(all_data) >= 1 else None
 
 # --- 數學計算 (IV, Greeks, GEX) ---
@@ -448,7 +520,7 @@ def prepare_ai_data(df, inst_opt_today, inst_opt_yesterday, inst_fut, futures_pr
 def build_ai_prompt(data_str, taiex_price):
     return f"""
     你是台指期莊家分析師。
-    目標：分析籌碼結構，預判結算行情 (Max Pain)。
+    目標：分析籌碼結構,預判結算行情 (Max Pain)。
     
     現貨價格：{taiex_price}
     
@@ -490,7 +562,7 @@ def main():
     if 'show_analysis_results' not in st.session_state: st.session_state.show_analysis_results = False
     inject_adsense_head()
     
-    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤 - 強制回溯版)")
+    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤 - 智能回溯版)")
     
     if st.sidebar.button("🔄 重新整理"):
         st.cache_data.clear()
@@ -499,7 +571,7 @@ def main():
     
     st.sidebar.caption(f"Gemini: {'✅' if gemini_model else '❌'} | ChatGPT: {'✅' if openai_client else '❌'}")
 
-    with st.spinner("🔄 正在強制回溯搜尋最新數據..."):
+    with st.spinner("🔄 智能搜尋最新數據中 (最多回溯 30 天)..."):
         taiex_now = get_realtime_data()
         
         # 1. 期貨行情 (含日期)
@@ -514,8 +586,17 @@ def main():
         # 4. 選擇權全市場
         all_option_data = get_option_data_multi_days(days=2)
 
+    # 🔥 詳細診斷訊息
+    st.sidebar.markdown("### 📊 數據狀態")
+    st.sidebar.write(f"現貨: {'✅' if taiex_now else '❌'}")
+    st.sidebar.write(f"期貨: {'✅' if futures_price else '❌'} ({fut_date})")
+    st.sidebar.write(f"法人期貨: {'✅' if inst_fut_position else '❌'}")
+    st.sidebar.write(f"法人選擇權: {'✅' if inst_opt_today is not None else '❌'}")
+    st.sidebar.write(f"選擇權市場: {'✅' if all_option_data else '❌'}")
+
     if not all_option_data:
-        st.error("❌ 無法抓取任何選擇權數據 (已回溯 20 天)")
+        st.error("❌ 無法抓取任何選擇權數據 (已回溯 30 天)")
+        st.info("💡 可能原因:\n1. 期交所網站維護中\n2. 連續假期導致無交易日\n3. 網頁結構改變")
         return
 
     # 數據處理
