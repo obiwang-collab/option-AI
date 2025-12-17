@@ -21,66 +21,97 @@ with tab1:
     st.markdown("### 📈 三大法人期貨淨部位")
     
     if st.button("🧪 測試法人期貨", key="fut"):
-        url = "https://www.taifex.com.tw/cht/3/futContractsDate"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        
         query_date = (datetime.now(tz=TW_TZ) - timedelta(days=0)).strftime('%Y/%m/%d')
         st.write(f"測試日期: {query_date}")
         
-        payload = {
-            'queryType': '1',
-            'goDay': '',
-            'doDay': '',
-            'queryDate': query_date,
-            'commodityId': 'TXF'
-        }
+        # 測試多個 URL 和參數組合
+        test_configs = [
+            {
+                'name': '測試1: futContractsDate + TXF',
+                'url': "https://www.taifex.com.tw/cht/3/futContractsDate",
+                'payload': {
+                    'queryType': '1',
+                    'goDay': '',
+                    'doDay': '',
+                    'queryDate': query_date,
+                    'commodityId': 'TXF'
+                }
+            },
+            {
+                'name': '測試2: futContractsDate + TX',
+                'url': "https://www.taifex.com.tw/cht/3/futContractsDate",
+                'payload': {
+                    'queryType': '1',
+                    'marketCode': '0',
+                    'commodity_id': 'TX',
+                    'queryDate': query_date
+                }
+            },
+            {
+                'name': '測試3: futDataDown (三大法人)',
+                'url': "https://www.taifex.com.tw/cht/3/futDataDown",
+                'payload': {
+                    'down_type': '1',
+                    'queryDate': query_date,
+                    'commodity_id': 'TX'
+                }
+            },
+            {
+                'name': '測試4: 三大法人交易資訊',
+                'url': "https://www.taifex.com.tw/cht/3/futDataDown",
+                'payload': {
+                    'queryType': '2',
+                    'queryDate': query_date
+                }
+            }
+        ]
         
-        try:
-            res = requests.post(url, data=payload, headers=headers, timeout=10, verify=False)
-            res.encoding = 'utf-8'
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        for config in test_configs:
+            st.markdown(f"### {config['name']}")
+            st.json(config['payload'])
             
-            st.success(f"✅ HTTP 狀態: {res.status_code}")
-            st.info(f"內容長度: {len(res.text)} 字元")
-            
-            if "查無資料" in res.text:
-                st.error("❌ 期交所回應: 查無資料")
-            else:
-                dfs = pd.read_html(StringIO(res.text))
-                st.success(f"✅ 找到 {len(dfs)} 個表格")
+            try:
+                res = requests.post(config['url'], data=config['payload'], headers=headers, timeout=10, verify=False)
+                res.encoding = 'utf-8'
                 
-                if dfs:
-                    df = dfs[0]
-                    
-                    st.markdown("### 📋 原始表格資訊")
-                    st.write(f"**表格大小:** {df.shape}")
-                    st.write(f"**資料筆數:** {len(df)}")
-                    
-                    st.markdown("### 📝 所有欄位名稱")
-                    for i, col in enumerate(df.columns):
-                        st.text(f"{i}: {col}")
-                    
-                    st.markdown("### 🔍 完整原始資料")
-                    st.dataframe(df)
-                    
-                    st.markdown("### 🎯 尋找法人資料")
-                    
-                    inst_data = {}
-                    for idx, row in df.iterrows():
-                        row_str = " ".join([str(x) for x in row.values])
-                        st.text(f"Row {idx}: {row_str[:100]}...")
-                        
-                        if '外資' in row_str or '外資及陸資' in row_str:
-                            st.success(f"  ✅ 找到外資 (Row {idx})")
-                            st.write(row.values)
-                        elif '投信' in row_str:
-                            st.success(f"  ✅ 找到投信 (Row {idx})")
-                            st.write(row.values)
-                        elif '自營商' in row_str:
-                            st.success(f"  ✅ 找到自營商 (Row {idx})")
-                            st.write(row.values)
-                    
-        except Exception as e:
-            st.error(f"❌ 錯誤: {str(e)}")
+                st.info(f"狀態: {res.status_code}, 長度: {len(res.text)}")
+                
+                if "查無資料" in res.text:
+                    st.warning("❌ 查無資料")
+                    continue
+                
+                dfs = pd.read_html(StringIO(res.text))
+                if not dfs:
+                    st.warning("❌ 無法解析表格")
+                    continue
+                
+                st.success(f"✅ 找到 {len(dfs)} 個表格!")
+                
+                df = dfs[0]
+                st.write(f"表格大小: {df.shape}")
+                
+                st.markdown("#### 欄位名稱")
+                for i, col in enumerate(df.columns):
+                    st.text(f"{i}: {col}")
+                
+                st.markdown("#### 表格內容")
+                st.dataframe(df)
+                
+                st.markdown("#### 搜尋法人資料")
+                for idx, row in df.iterrows():
+                    row_str = " ".join([str(x) for x in row.values])
+                    if '外資' in row_str or '投信' in row_str or '自營商' in row_str:
+                        st.success(f"找到法人資料 (Row {idx}): {row_str[:80]}...")
+                
+                st.success("🎉 這個配置有效!")
+                break
+                
+            except Exception as e:
+                st.error(f"❌ 錯誤: {str(e)}")
+            
+            st.markdown("---")
 
 # ==========================================
 # 法人選擇權數據測試
@@ -89,66 +120,94 @@ with tab2:
     st.markdown("### 📊 三大法人選擇權")
     
     if st.button("🧪 測試法人選擇權", key="opt"):
-        url = "https://www.taifex.com.tw/cht/3/callsAndPutsDate"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        
         query_date = (datetime.now(tz=TW_TZ) - timedelta(days=0)).strftime('%Y/%m/%d')
         st.write(f"測試日期: {query_date}")
         
-        payload = {
-            'queryType': '1',
-            'goDay': '',
-            'doDay': '',
-            'queryDate': query_date,
-            'commodityId': 'TXO'
-        }
+        # 測試多個配置
+        test_configs = [
+            {
+                'name': '測試1: callsAndPutsDate + TXO',
+                'url': "https://www.taifex.com.tw/cht/3/callsAndPutsDate",
+                'payload': {
+                    'queryType': '1',
+                    'goDay': '',
+                    'doDay': '',
+                    'queryDate': query_date,
+                    'commodityId': 'TXO'
+                }
+            },
+            {
+                'name': '測試2: callsAndPutsDateDown',
+                'url': "https://www.taifex.com.tw/cht/3/callsAndPutsDateDown",
+                'payload': {
+                    'down_type': '1',
+                    'queryDate': query_date,
+                    'commodity_id': 'TXO'
+                }
+            },
+            {
+                'name': '測試3: 選擇權三大法人交易資訊',
+                'url': "https://www.taifex.com.tw/cht/3/callsAndPutsDate",
+                'payload': {
+                    'queryType': '2',
+                    'queryDate': query_date
+                }
+            }
+        ]
         
-        try:
-            res = requests.post(url, data=payload, headers=headers, timeout=10, verify=False)
-            res.encoding = 'utf-8'
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        for config in test_configs:
+            st.markdown(f"### {config['name']}")
+            st.json(config['payload'])
             
-            st.success(f"✅ HTTP 狀態: {res.status_code}")
-            st.info(f"內容長度: {len(res.text)} 字元")
-            
-            if "查無資料" in res.text:
-                st.error("❌ 期交所回應: 查無資料")
-            else:
-                dfs = pd.read_html(StringIO(res.text))
-                st.success(f"✅ 找到 {len(dfs)} 個表格")
+            try:
+                res = requests.post(config['url'], data=config['payload'], headers=headers, timeout=10, verify=False)
+                res.encoding = 'utf-8'
                 
-                if dfs:
-                    df = dfs[0]
+                st.info(f"狀態: {res.status_code}, 長度: {len(res.text)}")
+                
+                if "查無資料" in res.text:
+                    st.warning("❌ 查無資料")
+                    continue
+                
+                dfs = pd.read_html(StringIO(res.text))
+                if not dfs:
+                    st.warning("❌ 無法解析表格")
+                    continue
                     
-                    st.markdown("### 📋 原始表格資訊")
-                    st.write(f"**表格大小:** {df.shape}")
-                    st.write(f"**資料筆數:** {len(df)}")
-                    
-                    st.markdown("### 📝 所有欄位名稱")
-                    for i, col in enumerate(df.columns):
-                        st.text(f"{i}: {col}")
-                    
-                    st.markdown("### 🔍 完整原始資料")
-                    st.dataframe(df)
-                    
-                    st.markdown("### 🎯 篩選法人資料")
-                    
-                    df_filtered = df[df.iloc[:, 0].astype(str).str.contains('自營商|投信|外資', na=False)]
-                    
-                    if not df_filtered.empty:
-                        st.success(f"✅ 找到 {len(df_filtered)} 筆法人資料")
-                        st.dataframe(df_filtered)
-                    else:
-                        st.warning("⚠️ 未找到法人資料")
-                        st.info("嘗試其他篩選方式...")
-                        
-                        # 嘗試不同的篩選
-                        for idx, row in df.iterrows():
-                            row_str = " ".join([str(x) for x in row.values])
-                            if '外資' in row_str or '投信' in row_str or '自營商' in row_str:
-                                st.write(f"Row {idx}: {row.values}")
-                    
-        except Exception as e:
-            st.error(f"❌ 錯誤: {str(e)}")
+                st.success(f"✅ 找到 {len(dfs)} 個表格!")
+                
+                df = dfs[0]
+                st.write(f"表格大小: {df.shape}")
+                
+                st.markdown("#### 欄位名稱")
+                for i, col in enumerate(df.columns):
+                    st.text(f"{i}: {col}")
+                
+                st.markdown("#### 表格內容")
+                st.dataframe(df)
+                
+                st.markdown("#### 篩選法人資料")
+                df_filtered = df[df.iloc[:, 0].astype(str).str.contains('自營商|投信|外資', na=False)]
+                
+                if not df_filtered.empty:
+                    st.success(f"✅ 找到 {len(df_filtered)} 筆法人資料")
+                    st.dataframe(df_filtered)
+                else:
+                    st.warning("⚠️ 篩選失敗,嘗試手動搜尋...")
+                    for idx, row in df.iterrows():
+                        row_str = " ".join([str(x) for x in row.values])
+                        if '外資' in row_str or '投信' in row_str or '自營商' in row_str:
+                            st.success(f"找到法人 (Row {idx}): {row_str[:80]}...")
+                
+                st.success("🎉 這個配置有效!")
+                break
+                
+            except Exception as e:
+                st.error(f"❌ 錯誤: {str(e)}")
+            
+            st.markdown("---")
 
 st.markdown("---")
 st.markdown("### 💡 說明")
