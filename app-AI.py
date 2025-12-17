@@ -353,7 +353,7 @@ def get_option_data_multi_days(days=3):
             
     return all_data if len(all_data) >= 1 else None
 
-# 數學計算函數 (保持不變)
+# 數學計算函數
 def calculate_iv(option_price, spot_price, strike, time_to_expiry, option_type='call', risk_free_rate=0.015):
     if option_price <= 0 or spot_price <= 0 or strike <= 0 or time_to_expiry <= 0: return None
     sigma = 0.3
@@ -437,7 +437,7 @@ def calculate_multi_day_oi_change(all_data):
             df_latest[f'OI_Change_D{i}'] = df_merged['OI'] - df_merged[f'OI_D{i}']
     return df_latest
 
-# 圖表繪製函數 (保持不變,略)
+# 圖表繪製函數
 def plot_tornado_chart(df_target, title_text, spot_price):
     is_call = df_target['Type'].str.contains('買|Call', case=False, na=False)
     df_call = df_target[is_call][['Strike', 'OI', 'Amount']].rename(columns={'OI': 'Call_OI', 'Amount': 'Call_Amt'})
@@ -481,7 +481,7 @@ def plot_gex_chart(gex_df, spot_price):
     fig.update_layout(title="Dealer Gamma Exposure (GEX)", xaxis_title="履約價", yaxis_title="GEX", height=400, showlegend=False)
     return fig
 
-# AI 相關函數 (略,保持不變)
+# AI 相關函數
 def prepare_ai_data(df, inst_opt_data, inst_fut, futures_price, spot_price, basis, atm_iv, risk_reversal, gex_summary, data_date):
     df_ai = df.nlargest(30, 'Amount') if 'Amount' in df.columns else df
     cols = [c for c in ['Strike','Type','OI','Amount','OI_Change_D1'] if c in df_ai.columns]
@@ -576,6 +576,18 @@ def main():
         st.rerun()
     
     st.sidebar.caption(f"Gemini: {'✅' if gemini_model else '❌'} | ChatGPT: {'✅' if openai_client else '❌'}")
+    
+    # 🆕 手動輸入現貨點數
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📊 手動設定現貨")
+    manual_spot = st.sidebar.number_input(
+        "輸入當前大盤點數 (選填)",
+        min_value=0,
+        max_value=30000,
+        value=0,
+        step=10,
+        help="若自動抓取有延遲或收盤後,可手動輸入。輸入 0 則使用自動抓取值"
+    )
 
     with st.spinner("🔄 正在搜尋最新數據..."):
         taiex_now = get_realtime_data()
@@ -583,6 +595,15 @@ def main():
         inst_fut_position = get_institutional_futures_position()
         inst_opt_data = get_institutional_option_data()
         all_option_data = get_option_data_multi_days(days=2)
+    
+    # 🆕 如果有手動輸入,使用手動值覆蓋自動抓取值
+    if manual_spot > 0:
+        taiex_now = manual_spot
+        st.sidebar.success(f"✅ 使用手動輸入: {int(manual_spot)} 點")
+    elif taiex_now:
+        st.sidebar.info(f"ℹ️ 自動抓取: {int(taiex_now)} 點")
+    else:
+        st.sidebar.warning("⚠️ 無法取得現貨價格,請手動輸入")
 
     if not all_option_data:
         st.error("❌ 無法抓取選擇權數據")
@@ -598,7 +619,17 @@ def main():
     # === 儀表板 ===
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.caption(f"更新時間: {datetime.now(tz=TW_TZ).strftime('%H:%M:%S')}")
-    c2.metric("加權指數 (即時)", f"{int(taiex_now) if taiex_now else 'N/A'}")
+    
+    # 🆕 根據數據來源顯示不同標籤
+    spot_label = "加權指數 "
+    if manual_spot > 0:
+        spot_label += "(手動)"
+    elif taiex_now:
+        spot_label += "(即時)"
+    else:
+        spot_label += "(無數據)"
+    
+    c2.metric(spot_label, f"{int(taiex_now) if taiex_now else 'N/A'}")
     c3.metric(f"台指期 ({fut_date[5:]})", f"{int(futures_price) if futures_price else 'N/A'}")
     c4.metric("基差", f"{basis:.0f}" if basis else "N/A", delta_color="normal" if basis and basis > 0 else "inverse")
     
@@ -646,89 +677,104 @@ def main():
                 
                 # 計算策略傾向
                 if call_net > 0 and put_net > 0:
-                    strategy = "🟢 雙買 (作多波動)"
+                    strategy = "🔵 做多波動 (買雙CALL+PUT)"
                 elif call_net < 0 and put_net < 0:
-                    strategy = "🔴 雙賣 (作空波動)"
-                elif call_net > 0 and put_net < 0:
-                    strategy = "🟡 買C賣P (強多)"
-                elif call_net < 0 and put_net > 0:
-                    strategy = "🟠 賣C買P (強空)"
+                    strategy = "🟠 做空波動 (賣雙CALL+PUT)"
+                elif call_net > 0 > put_net:
+                    strategy = "🟢 看多 (買CALL+賣PUT)"
+                elif put_net > 0 > call_net:
+                    strategy = "🔴 看空 (買PUT+賣CALL)"
                 else:
                     strategy = "⚪ 中性"
                 
                 opt_display.append({
                     '法人': inst,
-                    'Call淨部位': f"{call_net:+,}",
-                    'Put淨部位': f"{put_net:+,}",
-                    '策略': strategy
+                    'Call淨單': f"{call_net:+,}",
+                    'Put淨單': f"{put_net:+,}",
+                    '策略傾向': strategy
                 })
         
         if opt_display:
-            df_opt_display = pd.DataFrame(opt_display)
-            st.dataframe(df_opt_display, use_container_width=True, hide_index=True)
-            
-            # 解讀說明
-            with st.expander("💡 選擇權策略解讀"):
-                st.markdown("""
-                **淨部位說明:**
-                - **正數 (+)**: 買方部位 > 賣方部位 (看漲/看跌該方向)
-                - **負數 (-)**: 賣方部位 > 買方部位 (不看該方向)
-                
-                **策略組合:**
-                - 🟢 **雙買 (買Call+買Put)**: 預期大波動,不論漲跌
-                - 🔴 **雙賣 (賣Call+賣Put)**: 預期盤整,收權利金
-                - 🟡 **買C賣P**: 強烈看多
-                - 🟠 **賣C買P**: 強烈看空
-                """)
+            st.dataframe(pd.DataFrame(opt_display), use_container_width=True, hide_index=True)
     else:
-        st.info("ℹ️ 選擇權法人數據尚未更新")
-
-    st.markdown("---")
-
-    # === 進階計算 & 圖表 ===
-    targets = get_next_contracts(df_full, data_date)
-    if targets:
-        target = targets[0]
-        df_target = df_full[df_full['Month'] == target['code']]
-        
-        atm_iv, rr, atm_k = calculate_risk_reversal(df_target, taiex_now or 23000, target['date'])
-        gex_df = calculate_dealer_gex(df_target, taiex_now or 23000, target['date'])
-        
-        st.markdown(f"### 📊 市場指標 ({target['code']} 結算: {target['date']})")
-        k1, k2 = st.columns(2)
-        k1.metric("ATM IV", f"{atm_iv*100:.2f}%" if atm_iv else "N/A")
-        k2.metric("Risk Reversal", f"{rr*100:.2f}%" if rr else "N/A", "看漲" if rr and rr>0 else "看跌")
-        
-        if gex_df is not None:
-            st.plotly_chart(plot_gex_chart(gex_df, taiex_now), use_container_width=True)
-
-        st.plotly_chart(plot_tornado_chart(df_target, f"{target['code']} 籌碼分佈", taiex_now), use_container_width=True)
+        st.warning("⚠️ 查無法人選擇權數據")
     
-    # === AI 分析 ===
     st.markdown("---")
-    if st.session_state.analysis_unlocked:
-        if st.button("🧛‍♂️ 啟動 AI 分析"): st.session_state.show_analysis_results = True
-    else:
-        show_ad_placeholder()
-        if st.button("⏱️ 解鎖 AI 分析"):
-            with st.empty():
-                for i in range(5, 0, -1):
-                    st.write(f"⏳ {i}...")
-                    time.sleep(1)
-            st.session_state.analysis_unlocked = True
-            st.rerun()
-
-    if st.session_state.show_analysis_results and targets:
-        data_str = prepare_ai_data(df_full, inst_opt_data, inst_fut_position, futures_price, taiex_now, basis, atm_iv, rr, gex_df, data_date)
-        prompt = build_ai_prompt(data_str, taiex_now)
+    
+    # === 選擇權 OI 龍捲風圖 ===
+    st.markdown("### 📊 選擇權未平倉分佈 (Put支撐 vs Call壓力)")
+    
+    next_contracts = get_next_contracts(df_full, data_date)
+    
+    if len(next_contracts) >= 2:
+        tab1, tab2 = st.tabs([f"近月 {next_contracts[0]['code']} (結算:{next_contracts[0]['date']})", 
+                               f"次月 {next_contracts[1]['code']} (結算:{next_contracts[1]['date']})"])
         
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("🔵 Gemini")
-            st.info(ask_gemini(prompt))
-        with c2:
-            st.subheader("🟢 ChatGPT")
-            st.success(ask_chatgpt(prompt))
+        with tab1:
+            df_near = df_full[df_full['Month'] == next_contracts[0]['code']]
+            if not df_near.empty:
+                fig1 = plot_tornado_chart(df_near, f"近月合約 {next_contracts[0]['code']}", taiex_now)
+                st.plotly_chart(fig1, use_container_width=True)
+                
+                # GEX 分析
+                gex_near = calculate_dealer_gex(df_near, taiex_now, next_contracts[0]['date'])
+                if gex_near is not None:
+                    st.markdown("#### Dealer Gamma Exposure (GEX)")
+                    fig_gex = plot_gex_chart(gex_near, taiex_now)
+                    if fig_gex: st.plotly_chart(fig_gex, use_container_width=True)
+        
+        with tab2:
+            df_far = df_full[df_full['Month'] == next_contracts[1]['code']]
+            if not df_far.empty:
+                fig2 = plot_tornado_chart(df_far, f"次月合約 {next_contracts[1]['code']}", taiex_now)
+                st.plotly_chart(fig2, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # === AI 分析區 ===
+    st.markdown("### 🤖 AI 莊家控盤分析")
+    
+    if not gemini_model and not openai_client:
+        st.error("❌ 未設定 AI API Key,無法使用分析功能")
+    else:
+        col_ai1, col_ai2 = st.columns(2)
+        
+        with col_ai1:
+            if st.button("🔮 Gemini 分析", disabled=not gemini_model, use_container_width=True):
+                st.session_state.show_analysis_results = True
+                st.session_state.ai_provider = 'gemini'
+        
+        with col_ai2:
+            if st.button("💬 ChatGPT 分析", disabled=not openai_client, use_container_width=True):
+                st.session_state.show_analysis_results = True
+                st.session_state.ai_provider = 'chatgpt'
+        
+        if st.session_state.show_analysis_results:
+            # 準備分析數據
+            df_near = df_full[df_full['Month'] == next_contracts[0]['code']] if next_contracts else df_full
+            atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(df_near, taiex_now, next_contracts[0]['date']) if next_contracts else (None, None, None)
+            gex_summary = calculate_dealer_gex(df_near, taiex_now, next_contracts[0]['date']) if next_contracts else None
+            
+            ai_data = prepare_ai_data(
+                df_near, inst_opt_data, inst_fut_position, 
+                futures_price, taiex_now, basis, 
+                atm_iv, risk_reversal, gex_summary, data_date
+            )
+            
+            prompt = build_ai_prompt(ai_data, taiex_now)
+            
+            with st.spinner(f"🤖 {st.session_state.ai_provider.upper()} 分析中..."):
+                if st.session_state.ai_provider == 'gemini':
+                    result = ask_gemini(prompt)
+                else:
+                    result = ask_chatgpt(prompt)
+                
+                st.markdown("#### 📊 AI 分析結果")
+                st.markdown(result)
+    
+    # 廣告區
+    st.markdown("---")
+    show_ad_placeholder()
 
 if __name__ == "__main__":
     main()
