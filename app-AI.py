@@ -149,11 +149,10 @@ def get_institutional_futures_position():
     url = "https://www.taifex.com.tw/cht/3/futContractsDate"
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    for i in range(10):  # 回溯10天
+    for i in range(10):
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         query_date = target_date.strftime('%Y/%m/%d')
         
-        # 🔥 關鍵修正: 使用 queryType=2
         payload = {
             'queryType': '2',
             'queryDate': query_date,
@@ -173,17 +172,14 @@ def get_institutional_futures_position():
                 
             df = dfs[0]
             
-            # 找到「臺股期貨」的三大法人資料
             inst_data = {}
             
             for idx, row in df.iterrows():
                 row_str = " ".join([str(x) for x in row.values])
                 
-                # 必須同時包含「臺股期貨」和法人名稱
                 if '臺股期貨' not in row_str:
                     continue
                 
-                # 提取未平倉淨部位 (第13欄)
                 try:
                     net_position = int(str(row.iloc[13]).replace(',', ''))
                 except:
@@ -196,7 +192,7 @@ def get_institutional_futures_position():
                 elif '自營商' in row_str:
                     inst_data['自營商'] = net_position
             
-            if len(inst_data) == 3:  # 確保三個法人都有
+            if len(inst_data) == 3:
                 inst_data['date'] = query_date
                 return inst_data
                 
@@ -215,7 +211,6 @@ def get_institutional_option_data():
         target_date = datetime.now(tz=TW_TZ) - timedelta(days=i)
         query_date = target_date.strftime('%Y/%m/%d')
         
-        # 🔥 關鍵修正: 使用 queryType=2
         payload = {
             'queryType': '2',
             'queryDate': query_date,
@@ -235,27 +230,19 @@ def get_institutional_option_data():
             
             df = dfs[0]
             
-            # 提取台指選擇權的法人資料
             inst_data = {}
             
             for idx, row in df.iterrows():
                 row_str = " ".join([str(x) for x in row.values])
                 
-                # 必須包含「臺指選擇權」
                 if '臺指選擇權' not in row_str:
                     continue
                 
-                # 欄位結構:
-                # [0]序號 [1]商品名稱 [2]權別(買權/賣權) [3]身份別
-                # [4-9]交易資料 [10-15]未平倉資料
-                # [14]未平倉買賣差額口數
-                
                 try:
-                    option_type = str(row.iloc[2])  # 買權/賣權
-                    institution = str(row.iloc[3])  # 自營商/投信/外資
-                    net_oi = int(str(row.iloc[14]).replace(',', ''))  # 未平倉買賣差額
+                    option_type = str(row.iloc[2])
+                    institution = str(row.iloc[3])
+                    net_oi = int(str(row.iloc[14]).replace(',', ''))
                     
-                    # 建立資料結構
                     if institution not in inst_data:
                         inst_data[institution] = {}
                     
@@ -267,7 +254,6 @@ def get_institutional_option_data():
                 except:
                     continue
             
-            # 確保至少有一個法人有完整的 Call/Put 資料
             if inst_data and any(len(v) == 2 for v in inst_data.values()):
                 inst_data['date'] = query_date
                 return inst_data
@@ -277,10 +263,10 @@ def get_institutional_option_data():
     
     return None
 
-# 🔥🔥🔥 核心修正:選擇權數據抓取 - 修正欄位對應
+# 🔥🔥🔥 核心修正:選擇權數據抓取 - 使用原本驗證過的邏輯
 @st.cache_data(ttl=300)
 def get_option_data_multi_days(days=3):
-    """獲取選擇權全市場數據 (修正欄位對應)"""
+    """獲取選擇權全市場數據 (原始版本 - 已驗證可用)"""
     url = "https://www.taifex.com.tw/cht/3/optDailyMarketReport"
     headers = {'User-Agent': 'Mozilla/5.0'}
     all_data = []
@@ -444,6 +430,10 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     df_put = df_target[~is_call][['Strike', 'OI', 'Amount']].rename(columns={'OI': 'Put_OI', 'Amount': 'Put_Amt'})
     data = pd.merge(df_call, df_put, on='Strike', how='outer').fillna(0).sort_values('Strike')
     
+    # 🔥 計算總金額
+    total_call_amt = data['Call_Amt'].sum()
+    total_put_amt = data['Put_Amt'].sum()
+    
     FOCUS_RANGE = 1200
     center_price = spot_price if (spot_price and spot_price > 0) else data['Strike'].median()
     if center_price > 0:
@@ -466,10 +456,51 @@ def plot_tornado_chart(df_target, title_text, spot_price):
     fig = go.Figure()
     fig.add_trace(go.Bar(y=data['Strike'], x=-data['Put_OI'], orientation='h', name='Put (支撐)', marker_color='#2ca02c', opacity=0.85, text=data['Put_Text'], textposition='outside', hovertemplate='Put OI: %{x}<br>Amt: %{customdata:.2f}億', customdata=data['Put_Amt']/1e8))
     fig.add_trace(go.Bar(y=data['Strike'], x=data['Call_OI'], orientation='h', name='Call (壓力)', marker_color='#d62728', opacity=0.85, text=data['Call_Text'], textposition='outside', hovertemplate='Call OI: %{x}<br>Amt: %{customdata:.2f}億', customdata=data['Call_Amt']/1e8))
+    
     if spot_price:
         fig.add_hline(y=spot_price, line_dash="dash", line_color="#ff7f0e", line_width=2)
         fig.add_annotation(x=1.05, y=spot_price, text=f"現貨 {int(spot_price)}", showarrow=False, bgcolor="#ff7f0e", font=dict(color="white"))
-    fig.update_layout(title=dict(text=title_text, x=0.5), xaxis=dict(range=[-x_limit, x_limit]), barmode='overlay', height=750)
+    
+    # 🔥 在圖表兩側加上總金額標註
+    # Put 總金額 (左側)
+    fig.add_annotation(
+        x=-x_limit * 0.95,
+        y=data['Strike'].max() if not data.empty else 0,
+        text=f"<b>Put 總金額</b><br>{total_put_amt/1e8:.1f} 億",
+        showarrow=False,
+        bgcolor="#2ca02c",
+        font=dict(color="white", size=14),
+        bordercolor="white",
+        borderwidth=2,
+        xanchor="left",
+        yanchor="top"
+    )
+    
+    # Call 總金額 (右側)
+    fig.add_annotation(
+        x=x_limit * 0.95,
+        y=data['Strike'].max() if not data.empty else 0,
+        text=f"<b>Call 總金額</b><br>{total_call_amt/1e8:.1f} 億",
+        showarrow=False,
+        bgcolor="#d62728",
+        font=dict(color="white", size=14),
+        bordercolor="white",
+        borderwidth=2,
+        xanchor="right",
+        yanchor="top"
+    )
+    
+    # 🔥 Y軸格式化: 完整數字 + 千分位逗號
+    fig.update_layout(
+        title=dict(text=title_text, x=0.5), 
+        xaxis=dict(range=[-x_limit, x_limit]), 
+        yaxis=dict(
+            tickformat=",",  # 加上千分位逗號
+            separatethousands=True  # 啟用千分位分隔
+        ),
+        barmode='overlay', 
+        height=750
+    )
     return fig
 
 def plot_gex_chart(gex_df, spot_price):
@@ -478,7 +509,18 @@ def plot_gex_chart(gex_df, spot_price):
     colors = ['green' if x > 0 else 'red' for x in gex_df['GEX']]
     fig.add_trace(go.Bar(x=gex_df['Strike'], y=gex_df['GEX'], marker_color=colors, name='GEX'))
     if spot_price: fig.add_vline(x=spot_price, line_dash="dash", line_color="orange")
-    fig.update_layout(title="Dealer Gamma Exposure (GEX)", xaxis_title="履約價", yaxis_title="GEX", height=400, showlegend=False)
+    # 🔥 X軸格式化: 完整數字 + 千分位逗號
+    fig.update_layout(
+        title="Dealer Gamma Exposure (GEX)", 
+        xaxis_title="履約價", 
+        yaxis_title="GEX", 
+        xaxis=dict(
+            tickformat=",",  # 加上千分位逗號
+            separatethousands=True  # 啟用千分位分隔
+        ),
+        height=400, 
+        showlegend=False
+    )
     return fig
 
 # AI 相關函數
@@ -486,7 +528,6 @@ def prepare_ai_data(df, inst_opt_data, inst_fut, futures_price, spot_price, basi
     df_ai = df.nlargest(30, 'Amount') if 'Amount' in df.columns else df
     cols = [c for c in ['Strike','Type','OI','Amount','OI_Change_D1'] if c in df_ai.columns]
     
-    # 選擇權法人資料格式化
     inst_opt_str = ""
     if inst_opt_data and isinstance(inst_opt_data, dict):
         for inst in ['外資', '投信', '自營商']:
@@ -496,7 +537,6 @@ def prepare_ai_data(df, inst_opt_data, inst_fut, futures_price, spot_price, basi
                 put_net = data.get('Put', 0)
                 inst_opt_str += f"{inst}: Call {call_net:+,} | Put {put_net:+,}\n"
     
-    # 期貨法人資料格式化
     inst_fut_str = ""
     if inst_fut:
         for k,v in inst_fut.items(): 
@@ -526,7 +566,7 @@ def prepare_ai_data(df, inst_opt_data, inst_fut, futures_price, spot_price, basi
 def build_ai_prompt(data_str, taiex_price):
     return f"""
     你是台指期莊家分析師。
-    目標：分析籌碼結構，預判結算行情 (Max Pain)。
+    目標：分析籌碼結構,預判結算行情 (Max Pain)。
     
     現貨價格：{taiex_price}
     
@@ -553,31 +593,41 @@ def ask_chatgpt(prompt):
     except Exception as e: return str(e)
 
 def get_next_contracts(df, data_date):
+    """從數據中提取未結算的合約"""
     unique_codes = sorted(df['Month'].unique())
     targets = []
     for code in unique_codes:
         s_date = get_settlement_date(code)
-        if s_date > data_date:
+        if s_date >= data_date:  # 包含今天
             targets.append({'code': code, 'date': s_date})
-            if len(targets) >= 2: break
     return targets
 
 # 主程式
 def main():
-    if 'analysis_unlocked' not in st.session_state: st.session_state.analysis_unlocked = False
-    if 'show_analysis_results' not in st.session_state: st.session_state.show_analysis_results = False
+    if 'analysis_unlocked' not in st.session_state: 
+        st.session_state.analysis_unlocked = False
+    if 'show_analysis_results' not in st.session_state: 
+        st.session_state.show_analysis_results = False
+    if 'selected_contract' not in st.session_state:
+        st.session_state.selected_contract = None
+    if 'all_contracts' not in st.session_state:
+        st.session_state.all_contracts = None
+    
     inject_adsense_head()
     
-    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版 - 欄位修正)")
+    st.title("🧛‍♂️ 台指期籌碼戰情室 (莊家控盤版)")
     
+    # 側邊欄設定
     if st.sidebar.button("🔄 重新整理"):
         st.cache_data.clear()
         st.session_state.show_analysis_results = False
+        st.session_state.selected_contract = None
+        st.session_state.all_contracts = None
         st.rerun()
     
     st.sidebar.caption(f"Gemini: {'✅' if gemini_model else '❌'} | ChatGPT: {'✅' if openai_client else '❌'}")
     
-    # 🆕 手動輸入現貨點數
+    # 手動輸入現貨點數
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📊 手動設定現貨")
     manual_spot = st.sidebar.number_input(
@@ -588,207 +638,271 @@ def main():
         step=10,
         help="若自動抓取有延遲或收盤後,可手動輸入。輸入 0 則使用自動抓取值"
     )
-
-    with st.spinner("🔄 正在搜尋最新數據..."):
-        taiex_now = get_realtime_data()
-        futures_price, futures_volume, fut_date = get_futures_data()
-        inst_fut_position = get_institutional_futures_position()
-        inst_opt_data = get_institutional_option_data()
-        all_option_data = get_option_data_multi_days(days=2)
     
-    # 🆕 如果有手動輸入,使用手動值覆蓋自動抓取值
-    if manual_spot > 0:
-        taiex_now = manual_spot
-        st.sidebar.success(f"✅ 使用手動輸入: {int(manual_spot)} 點")
-    elif taiex_now:
-        st.sidebar.info(f"ℹ️ 自動抓取: {int(taiex_now)} 點")
-    else:
-        st.sidebar.warning("⚠️ 無法取得現貨價格,請手動輸入")
-
-    if not all_option_data:
-        st.error("❌ 無法抓取選擇權數據")
+    # 🔥 步驟1: 抓取數據並提取合約列表
+    if st.session_state.all_contracts is None:
+        st.markdown("### 📋 步驟 1: 載入選擇權數據")
+        
+        with st.spinner("🔄 正在載入數據..."):
+            all_option_data = get_option_data_multi_days(days=2)
+        
+        if not all_option_data:
+            st.error("❌ 無法取得選擇權數據")
+            st.info("可能原因: 非交易時間、期交所維護、或網路問題")
+            return
+        
+        # 從數據中提取合約列表
+        df_temp = all_option_data[0]['df']
+        data_date = all_option_data[0]['date']
+        
+        if 'Month' not in df_temp.columns:
+            st.error("❌ 數據格式錯誤")
+            return
+        
+        # 提取所有合約
+        all_contracts = get_next_contracts(df_temp, data_date)
+        
+        if not all_contracts:
+            st.error("❌ 找不到未結算的合約")
+            return
+        
+        # 儲存到 session_state
+        st.session_state.all_contracts = all_contracts
+        st.session_state.all_option_data = all_option_data
+        st.session_state.data_date = data_date
+        st.rerun()
+    
+    # 🔥 步驟2: 選擇合約
+    all_contracts = st.session_state.all_contracts
+    data_date = st.session_state.data_date
+    
+    st.markdown("### 📋 選擇要分析的合約")
+    st.caption(f"數據日期: {data_date}")
+    
+    # 建立選項
+    contract_options = []
+    for c in all_contracts:
+        contract_type = '週選' if 'W' in c['code'] or 'F' in c['code'] else '月選'
+        label = f"{c['code']} ({contract_type}) - 結算日: {c['date']}"
+        contract_options.append((label, c['code'], c['date']))
+    
+    selected_label = st.selectbox(
+        "請選擇合約",
+        options=[opt[0] for opt in contract_options],
+        index=0
+    )
+    
+    # 找到對應的合約資訊
+    selected_info = next((opt for opt in contract_options if opt[0] == selected_label), None)
+    
+    if not selected_info:
+        st.error("❌ 選擇失敗")
         return
-
-    # 數據處理
-    df_full = calculate_multi_day_oi_change(all_option_data)
-    data_date = all_option_data[0]['date']
-    basis = (futures_price - taiex_now) if (taiex_now and futures_price) else None
     
-    st.sidebar.download_button("📥 下載數據", df_full.to_csv(index=False).encode('utf-8-sig'), "opt_data.csv")
-
-    # === 儀表板 ===
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.caption(f"更新時間: {datetime.now(tz=TW_TZ).strftime('%H:%M:%S')}")
+    selected_code = selected_info[1]
+    settlement_date = selected_info[2]
     
-    # 🆕 根據數據來源顯示不同標籤
-    spot_label = "加權指數 "
-    if manual_spot > 0:
-        spot_label += "(手動)"
-    elif taiex_now:
-        spot_label += "(即時)"
-    else:
-        spot_label += "(無數據)"
+    st.info(f"✅ 已選擇: **{selected_code}** (結算日: {settlement_date})")
     
-    c2.metric(spot_label, f"{int(taiex_now) if taiex_now else 'N/A'}")
-    c3.metric(f"台指期 ({fut_date[5:]})", f"{int(futures_price) if futures_price else 'N/A'}")
-    c4.metric("基差", f"{basis:.0f}" if basis else "N/A", delta_color="normal" if basis and basis > 0 else "inverse")
-    
-    call_amt = df_full[df_full['Type'].str.contains('Call|買')]['Amount'].sum()
-    put_amt = df_full[df_full['Type'].str.contains('Put|賣')]['Amount'].sum()
-    pc_ratio = (put_amt / call_amt * 100) if call_amt > 0 else 0
-    c5.metric(f"P/C 金額比 ({data_date[5:]})", f"{pc_ratio:.1f}%", "偏多" if pc_ratio > 100 else "偏空")
-    
+    # 🔥 步驟3: 開始分析
     st.markdown("---")
+    st.markdown("### 🚀 開始分析")
     
-    # === 法人籌碼區 ===
-    st.markdown("### 🏦 三大法人籌碼佈局")
+    if st.button("🔍 分析此合約", type="primary", use_container_width=True):
+        st.session_state.selected_contract = selected_code
+        st.session_state.settlement_date = settlement_date
+        st.rerun()
     
-    # 建立統一的籌碼表格
-    institutional_display = []
-    
-    # 收集期貨數據
-    fut_data_date = "N/A"
-    if inst_fut_position:
-        fut_data_date = inst_fut_position.get('date', 'N/A')
-        for inst in ['外資', '投信', '自營商']:
-            val = inst_fut_position.get(inst, 0)
-            direction = "🟢 偏多" if val > 0 else "🔴 偏空" if val < 0 else "⚪ 中性"
-            
-            institutional_display.append({
-                '法人': inst,
-                '期貨淨單': f"{val:+,} 口",
-                '期貨傾向': direction,
-                'Call淨單': '-',
-                'Put淨單': '-',
-                '選擇權策略': '-'
-            })
-    
-    # 收集選擇權數據
-    opt_data_date = "N/A"
-    if inst_opt_data and 'date' in inst_opt_data:
-        opt_data_date = inst_opt_data.get('date', 'N/A')
+    # 🔥 如果已選擇合約,顯示分析結果
+    if st.session_state.selected_contract:
+        selected_code = st.session_state.selected_contract
+        settlement_date = st.session_state.settlement_date
+        all_option_data = st.session_state.all_option_data
         
-        for idx, inst in enumerate(['外資', '投信', '自營商']):
-            if inst in inst_opt_data:
-                data = inst_opt_data[inst]
-                call_net = data.get('Call', 0)
-                put_net = data.get('Put', 0)
-                
-                # 計算策略傾向
-                if call_net > 0 and put_net > 0:
-                    strategy = "🔵 做多波動 (買雙CALL+PUT)"
-                elif call_net < 0 and put_net < 0:
-                    strategy = "🟠 做空波動 (賣雙CALL+PUT)"
-                elif call_net > 0 > put_net:
-                    strategy = "🟢 看多 (買CALL+賣PUT)"
-                elif put_net > 0 > call_net:
-                    strategy = "🔴 看空 (買PUT+賣CALL)"
-                else:
-                    strategy = "⚪ 中性"
-                
-                # 如果已有期貨數據,更新對應列
-                if inst_fut_position and idx < len(institutional_display):
-                    institutional_display[idx]['Call淨單'] = f"{call_net:+,} 口"
-                    institutional_display[idx]['Put淨單'] = f"{put_net:+,} 口"
-                    institutional_display[idx]['選擇權策略'] = strategy
-                # 否則新增列
-                else:
-                    institutional_display.append({
-                        '法人': inst,
-                        '期貨淨單': '-',
-                        '期貨傾向': '-',
-                        'Call淨單': f"{call_net:+,} 口",
-                        'Put淨單': f"{put_net:+,} 口",
-                        '選擇權策略': strategy
-                    })
-    
-    # 顯示統一表格
-    if institutional_display:
-        st.caption(f"📅 期貨籌碼日期: {fut_data_date} | 選擇權籌碼日期: {opt_data_date}")
-        st.dataframe(
-            pd.DataFrame(institutional_display), 
-            use_container_width=True, 
-            hide_index=True
+        st.markdown("---")
+        st.markdown(f"## 📊 分析報告: {selected_code}")
+        
+        # 抓取其他數據
+        with st.spinner("🔄 正在更新數據..."):
+            taiex_now = get_realtime_data()
+            futures_price, futures_volume, fut_date = get_futures_data()
+            inst_fut_position = get_institutional_futures_position()
+            inst_opt_data = get_institutional_option_data()
+        
+        # 處理手動輸入
+        if manual_spot > 0:
+            taiex_now = manual_spot
+            st.sidebar.success(f"✅ 使用手動輸入: {int(manual_spot)} 點")
+        elif taiex_now:
+            st.sidebar.info(f"ℹ️ 自動抓取: {int(taiex_now)} 點")
+        else:
+            st.sidebar.warning("⚠️ 無法取得現貨價格,請手動輸入")
+        
+        # 過濾選定合約的數據
+        df_full = calculate_multi_day_oi_change(all_option_data)
+        df_selected = df_full[df_full['Month'] == selected_code].copy()
+        
+        if df_selected.empty:
+            st.error(f"❌ 找不到 {selected_code} 的數據")
+            return
+        
+        basis = (futures_price - taiex_now) if (taiex_now and futures_price) else None
+        
+        st.sidebar.download_button(
+            "📥 下載數據", 
+            df_selected.to_csv(index=False).encode('utf-8-sig'), 
+            f"{selected_code}_data.csv"
         )
-    else:
-        st.warning("⚠️ 查無法人籌碼數據")
-    
-    st.markdown("---")
-    
-    # === 選擇權 OI 龍捲風圖 ===
-    st.markdown("### 📊 選擇權未平倉分佈 (Put支撐 vs Call壓力)")
-    
-    next_contracts = get_next_contracts(df_full, data_date)
-    
-    if len(next_contracts) >= 2:
-        tab1, tab2 = st.tabs([f"近月 {next_contracts[0]['code']} (結算:{next_contracts[0]['date']})", 
-                               f"次月 {next_contracts[1]['code']} (結算:{next_contracts[1]['date']})"])
         
-        with tab1:
-            df_near = df_full[df_full['Month'] == next_contracts[0]['code']]
-            if not df_near.empty:
-                fig1 = plot_tornado_chart(df_near, f"近月合約 {next_contracts[0]['code']}", taiex_now)
-                st.plotly_chart(fig1, use_container_width=True)
+        # === 儀表板 ===
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.caption(f"更新時間: {datetime.now(tz=TW_TZ).strftime('%H:%M:%S')}")
+        
+        spot_label = "加權指數 "
+        if manual_spot > 0:
+            spot_label += "(手動)"
+        elif taiex_now:
+            spot_label += "(即時)"
+        else:
+            spot_label += "(無數據)"
+        
+        c2.metric(spot_label, f"{int(taiex_now) if taiex_now else 'N/A'}")
+        c3.metric(f"台指期 ({fut_date[5:]})", f"{int(futures_price) if futures_price else 'N/A'}")
+        c4.metric("基差", f"{basis:.0f}" if basis else "N/A", delta_color="normal" if basis and basis > 0 else "inverse")
+        
+        call_amt = df_selected[df_selected['Type'].str.contains('Call|買')]['Amount'].sum()
+        put_amt = df_selected[df_selected['Type'].str.contains('Put|賣')]['Amount'].sum()
+        pc_ratio = (put_amt / call_amt * 100) if call_amt > 0 else 0
+        c5.metric(f"P/C 金額比", f"{pc_ratio:.1f}%", "偏多" if pc_ratio > 100 else "偏空")
+        
+        st.markdown("---")
+        
+        # === 法人籌碼區 ===
+        st.markdown("### 🏦 三大法人籌碼佈局")
+        
+        institutional_display = []
+        
+        fut_data_date = "N/A"
+        if inst_fut_position:
+            fut_data_date = inst_fut_position.get('date', 'N/A')
+            for inst in ['外資', '投信', '自營商']:
+                val = inst_fut_position.get(inst, 0)
+                direction = "🟢 偏多" if val > 0 else "🔴 偏空" if val < 0 else "⚪ 中性"
                 
-                # GEX 分析
-                gex_near = calculate_dealer_gex(df_near, taiex_now, next_contracts[0]['date'])
-                if gex_near is not None:
-                    st.markdown("#### Dealer Gamma Exposure (GEX)")
-                    fig_gex = plot_gex_chart(gex_near, taiex_now)
-                    if fig_gex: st.plotly_chart(fig_gex, use_container_width=True)
+                institutional_display.append({
+                    '法人': inst,
+                    '期貨淨單': f"{val:+,} 口",
+                    '期貨傾向': direction,
+                    'Call淨單': '-',
+                    'Put淨單': '-',
+                    '選擇權策略': '-'
+                })
         
-        with tab2:
-            df_far = df_full[df_full['Month'] == next_contracts[1]['code']]
-            if not df_far.empty:
-                fig2 = plot_tornado_chart(df_far, f"次月合約 {next_contracts[1]['code']}", taiex_now)
-                st.plotly_chart(fig2, use_container_width=True)
-    
-    st.markdown("---")
-    
-    # === AI 分析區 ===
-    st.markdown("### 🤖 AI 莊家控盤分析")
-    
-    if not gemini_model and not openai_client:
-        st.error("❌ 未設定 AI API Key,無法使用分析功能")
-    else:
-        col_ai1, col_ai2 = st.columns(2)
-        
-        with col_ai1:
-            if st.button("🔮 Gemini 分析", disabled=not gemini_model, use_container_width=True):
-                st.session_state.show_analysis_results = True
-                st.session_state.ai_provider = 'gemini'
-        
-        with col_ai2:
-            if st.button("💬 ChatGPT 分析", disabled=not openai_client, use_container_width=True):
-                st.session_state.show_analysis_results = True
-                st.session_state.ai_provider = 'chatgpt'
-        
-        if st.session_state.show_analysis_results:
-            # 準備分析數據
-            df_near = df_full[df_full['Month'] == next_contracts[0]['code']] if next_contracts else df_full
-            atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(df_near, taiex_now, next_contracts[0]['date']) if next_contracts else (None, None, None)
-            gex_summary = calculate_dealer_gex(df_near, taiex_now, next_contracts[0]['date']) if next_contracts else None
+        opt_data_date = "N/A"
+        if inst_opt_data and 'date' in inst_opt_data:
+            opt_data_date = inst_opt_data.get('date', 'N/A')
             
-            ai_data = prepare_ai_data(
-                df_near, inst_opt_data, inst_fut_position, 
-                futures_price, taiex_now, basis, 
-                atm_iv, risk_reversal, gex_summary, data_date
+            for idx, inst in enumerate(['外資', '投信', '自營商']):
+                if inst in inst_opt_data:
+                    data = inst_opt_data[inst]
+                    call_net = data.get('Call', 0)
+                    put_net = data.get('Put', 0)
+                    
+                    if call_net > 0 and put_net > 0:
+                        strategy = "🔵 做多波動 (買雙CALL+PUT)"
+                    elif call_net < 0 and put_net < 0:
+                        strategy = "🟠 做空波動 (賣雙CALL+PUT)"
+                    elif call_net > 0 > put_net:
+                        strategy = "🟢 看多 (買CALL+賣PUT)"
+                    elif put_net > 0 > call_net:
+                        strategy = "🔴 看空 (買PUT+賣CALL)"
+                    else:
+                        strategy = "⚪ 中性"
+                    
+                    if inst_fut_position and idx < len(institutional_display):
+                        institutional_display[idx]['Call淨單'] = f"{call_net:+,} 口"
+                        institutional_display[idx]['Put淨單'] = f"{put_net:+,} 口"
+                        institutional_display[idx]['選擇權策略'] = strategy
+                    else:
+                        institutional_display.append({
+                            '法人': inst,
+                            '期貨淨單': '-',
+                            '期貨傾向': '-',
+                            'Call淨單': f"{call_net:+,} 口",
+                            'Put淨單': f"{put_net:+,} 口",
+                            '選擇權策略': strategy
+                        })
+        
+        if institutional_display:
+            st.caption(f"📅 期貨籌碼日期: {fut_data_date} | 選擇權籌碼日期: {opt_data_date}")
+            st.dataframe(
+                pd.DataFrame(institutional_display), 
+                use_container_width=True, 
+                hide_index=True
             )
+        else:
+            st.warning("⚠️ 查無法人籌碼數據")
+        
+        st.markdown("---")
+        
+        # === 龍捲風圖 ===
+        st.markdown(f"### 📊 {selected_code} 未平倉分佈 (結算: {settlement_date})")
+        
+        fig = plot_tornado_chart(df_selected, f"{selected_code} 合約", taiex_now)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # GEX 分析
+        gex_data = calculate_dealer_gex(df_selected, taiex_now, settlement_date)
+        if gex_data is not None:
+            st.markdown("#### Dealer Gamma Exposure (GEX)")
+            fig_gex = plot_gex_chart(gex_data, taiex_now)
+            if fig_gex:
+                st.plotly_chart(fig_gex, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # === AI 分析區 ===
+        st.markdown("### 🤖 AI 莊家控盤分析")
+        
+        if not gemini_model and not openai_client:
+            st.error("❌ 未設定 AI API Key,無法使用分析功能")
+        else:
+            col_ai1, col_ai2 = st.columns(2)
             
-            prompt = build_ai_prompt(ai_data, taiex_now)
+            with col_ai1:
+                if st.button("🔮 Gemini 分析", disabled=not gemini_model, use_container_width=True):
+                    st.session_state.show_analysis_results = True
+                    st.session_state.ai_provider = 'gemini'
             
-            with st.spinner(f"🤖 {st.session_state.ai_provider.upper()} 分析中..."):
-                if st.session_state.ai_provider == 'gemini':
-                    result = ask_gemini(prompt)
-                else:
-                    result = ask_chatgpt(prompt)
+            with col_ai2:
+                if st.button("💬 ChatGPT 分析", disabled=not openai_client, use_container_width=True):
+                    st.session_state.show_analysis_results = True
+                    st.session_state.ai_provider = 'chatgpt'
+            
+            if st.session_state.show_analysis_results:
+                atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(df_selected, taiex_now, settlement_date)
+                gex_summary = calculate_dealer_gex(df_selected, taiex_now, settlement_date)
                 
-                st.markdown("#### 📊 AI 分析結果")
-                st.markdown(result)
-    
-    # 廣告區
-    st.markdown("---")
-    show_ad_placeholder()
+                ai_data = prepare_ai_data(
+                    df_selected, inst_opt_data, inst_fut_position, 
+                    futures_price, taiex_now, basis, 
+                    atm_iv, risk_reversal, gex_summary, data_date
+                )
+                
+                prompt = build_ai_prompt(ai_data, taiex_now)
+                
+                with st.spinner(f"🤖 {st.session_state.ai_provider.upper()} 分析中..."):
+                    if st.session_state.ai_provider == 'gemini':
+                        result = ask_gemini(prompt)
+                    else:
+                        result = ask_chatgpt(prompt)
+                    
+                    st.markdown("#### 📊 AI 分析結果")
+                    st.markdown(result)
+        
+        # 廣告區
+        st.markdown("---")
+        show_ad_placeholder()
 
 if __name__ == "__main__":
     main()
