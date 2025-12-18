@@ -612,6 +612,8 @@ def main():
         st.session_state.selected_contract = None
     if 'all_contracts' not in st.session_state:
         st.session_state.all_contracts = None
+    if 'unlock_timer' not in st.session_state:
+        st.session_state.unlock_timer = 5
     
     inject_adsense_head()
     
@@ -867,38 +869,67 @@ def main():
         if not gemini_model and not openai_client:
             st.error("❌ 未設定 AI API Key,無法使用分析功能")
         else:
-            col_ai1, col_ai2 = st.columns(2)
-            
-            with col_ai1:
-                if st.button("🔮 Gemini 分析", disabled=not gemini_model, use_container_width=True):
-                    st.session_state.show_analysis_results = True
-                    st.session_state.ai_provider = 'gemini'
-            
-            with col_ai2:
-                if st.button("💬 ChatGPT 分析", disabled=not openai_client, use_container_width=True):
-                    st.session_state.show_analysis_results = True
-                    st.session_state.ai_provider = 'chatgpt'
-            
-            if st.session_state.show_analysis_results:
-                atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(df_selected, taiex_now, settlement_date)
-                gex_summary = calculate_dealer_gex(df_selected, taiex_now, settlement_date)
+            # 🔥 廣告解鎖機制
+            if not st.session_state.analysis_unlocked:
+                st.info("📺 請觀看廣告 5 秒後解鎖 AI 分析功能")
+                show_ad_placeholder()
                 
-                ai_data = prepare_ai_data(
-                    df_selected, inst_opt_data, inst_fut_position, 
-                    futures_price, taiex_now, basis, 
-                    atm_iv, risk_reversal, gex_summary, data_date
-                )
-                
-                prompt = build_ai_prompt(ai_data, taiex_now)
-                
-                with st.spinner(f"🤖 {st.session_state.ai_provider.upper()} 分析中..."):
-                    if st.session_state.ai_provider == 'gemini':
-                        result = ask_gemini(prompt)
-                    else:
-                        result = ask_chatgpt(prompt)
+                col_timer1, col_timer2, col_timer3 = st.columns([1, 2, 1])
+                with col_timer2:
+                    if 'unlock_timer' not in st.session_state:
+                        st.session_state.unlock_timer = 5
                     
-                    st.markdown("#### 📊 AI 分析結果")
-                    st.markdown(result)
+                    if st.session_state.unlock_timer > 0:
+                        st.markdown(f"<h2 style='text-align:center;color:#ff7f0e;'>⏰ {st.session_state.unlock_timer} 秒</h2>", unsafe_allow_html=True)
+                        if st.button("⏱️ 開始倒數", use_container_width=True, type="primary"):
+                            import time
+                            placeholder = st.empty()
+                            for i in range(5, 0, -1):
+                                placeholder.markdown(f"<h2 style='text-align:center;color:#ff7f0e;'>⏰ {i} 秒</h2>", unsafe_allow_html=True)
+                                time.sleep(1)
+                            st.session_state.analysis_unlocked = True
+                            st.session_state.unlock_timer = 0
+                            placeholder.empty()
+                            st.success("✅ AI 分析功能已解鎖!")
+                            st.rerun()
+                    else:
+                        st.success("✅ AI 分析功能已解鎖!")
+                        st.session_state.analysis_unlocked = True
+                        st.rerun()
+            else:
+                # AI 功能已解鎖
+                col_ai1, col_ai2 = st.columns(2)
+                
+                with col_ai1:
+                    if st.button("🔮 Gemini 分析", disabled=not gemini_model, use_container_width=True):
+                        st.session_state.show_analysis_results = True
+                        st.session_state.ai_provider = 'gemini'
+                
+                with col_ai2:
+                    if st.button("💬 ChatGPT 分析", disabled=not openai_client, use_container_width=True):
+                        st.session_state.show_analysis_results = True
+                        st.session_state.ai_provider = 'chatgpt'
+                
+                if st.session_state.show_analysis_results:
+                    atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(df_selected, taiex_now, settlement_date)
+                    gex_summary = calculate_dealer_gex(df_selected, taiex_now, settlement_date)
+                    
+                    ai_data = prepare_ai_data(
+                        df_selected, inst_opt_data, inst_fut_position, 
+                        futures_price, taiex_now, basis, 
+                        atm_iv, risk_reversal, gex_summary, data_date
+                    )
+                    
+                    prompt = build_ai_prompt(ai_data, taiex_now)
+                    
+                    with st.spinner(f"🤖 {st.session_state.ai_provider.upper()} 分析中..."):
+                        if st.session_state.ai_provider == 'gemini':
+                            result = ask_gemini(prompt)
+                        else:
+                            result = ask_chatgpt(prompt)
+                        
+                        st.markdown("#### 📊 AI 分析結果")
+                        st.markdown(result)
         
         # 廣告區
         st.markdown("---")
