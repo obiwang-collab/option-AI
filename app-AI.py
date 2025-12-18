@@ -612,8 +612,6 @@ def main():
         st.session_state.selected_contract = None
     if 'all_contracts' not in st.session_state:
         st.session_state.all_contracts = None
-    if 'unlock_timer' not in st.session_state:
-        st.session_state.unlock_timer = 5
     
     inject_adsense_head()
     
@@ -876,25 +874,15 @@ def main():
                 
                 col_timer1, col_timer2, col_timer3 = st.columns([1, 2, 1])
                 with col_timer2:
-                    if 'unlock_timer' not in st.session_state:
-                        st.session_state.unlock_timer = 5
-                    
-                    if st.session_state.unlock_timer > 0:
-                        st.markdown(f"<h2 style='text-align:center;color:#ff7f0e;'>⏰ {st.session_state.unlock_timer} 秒</h2>", unsafe_allow_html=True)
-                        if st.button("⏱️ 開始倒數", use_container_width=True, type="primary"):
-                            import time
-                            placeholder = st.empty()
-                            for i in range(5, 0, -1):
-                                placeholder.markdown(f"<h2 style='text-align:center;color:#ff7f0e;'>⏰ {i} 秒</h2>", unsafe_allow_html=True)
-                                time.sleep(1)
-                            st.session_state.analysis_unlocked = True
-                            st.session_state.unlock_timer = 0
-                            placeholder.empty()
-                            st.success("✅ AI 分析功能已解鎖!")
-                            st.rerun()
-                    else:
-                        st.success("✅ AI 分析功能已解鎖!")
+                    if st.button("⏱️ 開始倒數", use_container_width=True, type="primary"):
+                        import time
+                        placeholder = st.empty()
+                        for i in range(5, 0, -1):
+                            placeholder.markdown(f"<h2 style='text-align:center;color:#ff7f0e;'>⏰ {i} 秒</h2>", unsafe_allow_html=True)
+                            time.sleep(1)
                         st.session_state.analysis_unlocked = True
+                        placeholder.empty()
+                        st.success("✅ AI 分析功能已解鎖!")
                         st.rerun()
             else:
                 # AI 功能已解鎖
