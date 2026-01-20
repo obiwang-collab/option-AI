@@ -767,4 +767,161 @@ def main():
             spot_label += "(無數據)"
         
         c2.metric(spot_label, f"{int(taiex_now) if taiex_now else 'N/A'}")
-        c3.metric(f"台指
+        c3.metric(f"台指期 ({fut_date[5:]})", f"{int(futures_price) if futures_price else 'N/A'}")
+        c4.metric("基差", f"{basis:.0f}" if basis else "N/A", delta_color="normal" if basis and basis > 0 else "inverse")
+        
+        call_amt = df_selected[df_selected['Type'].str.contains('Call|買')]['Amount'].sum()
+        put_amt = df_selected[df_selected['Type'].str.contains('Put|賣')]['Amount'].sum()
+        pc_ratio = (put_amt / call_amt * 100) if call_amt > 0 else 0
+        c5.metric(f"P/C 金額比", f"{pc_ratio:.1f}%", "偏多" if pc_ratio > 100 else "偏空")
+        
+        st.markdown("---")
+        
+        # === 法人籌碼區 ===
+        st.markdown("### 🏦 三大法人籌碼佈局")
+        
+        institutional_display = []
+        
+        fut_data_date = "N/A"
+        if inst_fut_position:
+            fut_data_date = inst_fut_position.get('date', 'N/A')
+            for inst in ['外資', '投信', '自營商']:
+                val = inst_fut_position.get(inst, 0)
+                direction = "🟢 偏多" if val > 0 else "🔴 偏空" if val < 0 else "⚪ 中性"
+                
+                institutional_display.append({
+                    '法人': inst,
+                    '期貨淨單': f"{val:+,} 口",
+                    '期貨傾向': direction,
+                    'Call淨單': '-',
+                    'Put淨單': '-',
+                    '選擇權策略': '-'
+                })
+        
+        opt_data_date = "N/A"
+        if inst_opt_data and 'date' in inst_opt_data:
+            opt_data_date = inst_opt_data.get('date', 'N/A')
+            
+            for idx, inst in enumerate(['外資', '投信', '自營商']):
+                if inst in inst_opt_data:
+                    data = inst_opt_data[inst]
+                    call_net = data.get('Call', 0)
+                    put_net = data.get('Put', 0)
+                    
+                    if call_net > 0 and put_net > 0:
+                        strategy = "🔵 做多波動 (買雙CALL+PUT)"
+                    elif call_net < 0 and put_net < 0:
+                        strategy = "🟠 做空波動 (賣雙CALL+PUT)"
+                    elif call_net > 0 > put_net:
+                        strategy = "🟢 看多 (買CALL+賣PUT)"
+                    elif put_net > 0 > call_net:
+                        strategy = "🔴 看空 (買PUT+賣CALL)"
+                    else:
+                        strategy = "⚪ 中性"
+                    
+                    if inst_fut_position and idx < len(institutional_display):
+                        institutional_display[idx]['Call淨單'] = f"{call_net:+,} 口"
+                        institutional_display[idx]['Put淨單'] = f"{put_net:+,} 口"
+                        institutional_display[idx]['選擇權策略'] = strategy
+                    else:
+                        institutional_display.append({
+                            '法人': inst,
+                            '期貨淨單': '-',
+                            '期貨傾向': '-',
+                            'Call淨單': f"{call_net:+,} 口",
+                            'Put淨單': f"{put_net:+,} 口",
+                            '選擇權策略': strategy
+                        })
+        
+        if institutional_display:
+            st.caption(f"📅 期貨籌碼日期: {fut_data_date} | 選擇權籌碼日期: {opt_data_date}")
+            st.dataframe(
+                pd.DataFrame(institutional_display), 
+                use_container_width=True, 
+                hide_index=True
+            )
+        else:
+            st.warning("⚠️ 查無法人籌碼數據")
+        
+        st.markdown("---")
+        
+        # === 龍捲風圖 ===
+        st.markdown(f"### 📊 {selected_code} 未平倉分佈 (結算: {settlement_date})")
+        
+        fig = plot_tornado_chart(df_selected, f"{selected_code} 合約", taiex_now)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # GEX 分析
+        gex_data = calculate_dealer_gex(df_selected, taiex_now, settlement_date)
+        if gex_data is not None:
+            st.markdown("#### Dealer Gamma Exposure (GEX)")
+            fig_gex = plot_gex_chart(gex_data, taiex_now)
+            if fig_gex:
+                st.plotly_chart(fig_gex, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # === AI 分析區 ===
+        st.markdown("### 🤖 AI 莊家控盤分析")
+        
+        if not gemini_model and not openai_client:
+            st.error("❌ 未設定 AI API Key,無法使用分析功能")
+        else:
+            # 🔥 廣告解鎖機制
+            if not st.session_state.analysis_unlocked:
+                st.info("📺 請觀看廣告 5 秒後解鎖 AI 分析功能")
+                show_ad_placeholder()
+                
+                col_timer1, col_timer2, col_timer3 = st.columns([1, 2, 1])
+                with col_timer2:
+                    if st.button("⏱️ 開始倒數", use_container_width=True, type="primary"):
+                        import time
+                        placeholder = st.empty()
+                        for i in range(5, 0, -1):
+                            placeholder.markdown(f"<h2 style='text-align:center;color:#ff7f0e;'>⏰ {i} 秒</h2>", unsafe_allow_html=True)
+                            time.sleep(1)
+                        st.session_state.analysis_unlocked = True
+                        placeholder.empty()
+                        st.success("✅ AI 分析功能已解鎖!")
+                        st.rerun()
+            else:
+                # AI 功能已解鎖
+                col_ai1, col_ai2 = st.columns(2)
+                
+                with col_ai1:
+                    if st.button("🔮 Gemini 分析", disabled=not gemini_model, use_container_width=True):
+                        st.session_state.show_analysis_results = True
+                        st.session_state.ai_provider = 'gemini'
+                
+                with col_ai2:
+                    if st.button("💬 ChatGPT 分析", disabled=not openai_client, use_container_width=True):
+                        st.session_state.show_analysis_results = True
+                        st.session_state.ai_provider = 'chatgpt'
+                
+                if st.session_state.show_analysis_results:
+                    atm_iv, risk_reversal, atm_strike = calculate_risk_reversal(df_selected, taiex_now, settlement_date)
+                    gex_summary = calculate_dealer_gex(df_selected, taiex_now, settlement_date)
+                    
+                    ai_data = prepare_ai_data(
+                        df_selected, inst_opt_data, inst_fut_position, 
+                        futures_price, taiex_now, basis, 
+                        atm_iv, risk_reversal, gex_summary, data_date
+                    )
+                    
+                    prompt = build_ai_prompt(ai_data, taiex_now)
+                    
+                    with st.spinner(f"🤖 {st.session_state.ai_provider.upper()} 分析中..."):
+                        if st.session_state.ai_provider == 'gemini':
+                            result = ask_gemini(prompt)
+                        else:
+                            result = ask_chatgpt(prompt)
+                        
+                        st.markdown("#### 📊 AI 分析結果")
+                        st.markdown(result)
+        
+        # 廣告區
+        st.markdown("---")
+        show_ad_placeholder()
+
+if __name__ == "__main__":
+    main()
