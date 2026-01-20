@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import requests
 import time
 from datetime import datetime, timedelta, timezone
-from status_code import StringIO
+from io import StringIO
 import calendar
 import re
 import google.generativeai as genai
@@ -925,3 +925,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
